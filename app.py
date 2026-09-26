@@ -583,108 +583,263 @@ if db:
         st.sidebar.success(f"Deleted {del_id}")
         st.rerun()
 
-# ------------------------------------------------------------
-# Main: query a new chart
-# ------------------------------------------------------------
+tab1, tab2 = st.tabs(["🔎 Setup Library", "📒 Trade Journal"])
 
-st.header("🔎 Check a New Chart Against the Model")
+with tab1:
+    # ------------------------------------------------------------
+    # Main: query a new chart
+    # ------------------------------------------------------------
 
-query_market = st.selectbox("Market of the chart you're checking", MARKETS, key="query_market")
-query_file = st.file_uploader("Upload the chart to analyze", type=["png", "jpg", "jpeg"], key="query_upload")
+    st.header("🔎 Check a New Chart Against the Model")
 
-strict_mode = st.checkbox("Strict mode: only show library matches that also have a confirmed model sequence", value=True)
-same_timeframe_only = st.checkbox("Only compare within same timeframe", value=False)
-top_n = st.slider("Max matches to show", 3, 12, 6)
+    query_market = st.selectbox("Market of the chart you're checking", MARKETS, key="query_market")
+    query_file = st.file_uploader("Upload the chart to analyze", type=["png", "jpg", "jpeg"], key="query_upload")
 
-if query_file:
-    query_img = Image.open(query_file)
-    params = config[query_market]
-    analysis = analyze_image(query_img, params)
+    strict_mode = st.checkbox("Strict mode: only show library matches that also have a confirmed model sequence", value=True)
+    same_timeframe_only = st.checkbox("Only compare within same timeframe", value=False)
+    top_n = st.slider("Max matches to show", 3, 12, 6)
 
-    st.subheader("Detected on your chart")
-    if analysis["primary"] is None:
-        st.error(
-            "No OB → FVG → BOS/liquidity-sweep sequence detected on this chart with the "
-            f"current {query_market} parameters. Either the model genuinely isn't present here, "
-            "or the parameters need adjusting in the sidebar for this pair."
-        )
-        st.image(analysis["cropped"], use_container_width=True)
-    else:
-        p = analysis["primary"]
-        annotated = draw_annotated(analysis["cropped"], analysis["candles"], analysis["H"], p)
-        st.image(annotated, use_container_width=True)
-        st.success(
-            f"Detected a **{p['direction'].upper()}** setup "
-            f"({'liquidity sweep' if p['is_sweep'] else 'break of structure'}) — "
-            f"OB size {p['ob_size']*100:.1f}% · FVG size {p['fvg_size']*100:.1f}% of visible range."
-        )
-        st.caption("This OB zone (orange) is your suggested entry on THIS chart — it's independent of any saved example's entry point.")
+    if query_file:
+        query_img = Image.open(query_file)
+        params = config[query_market]
+        analysis = analyze_image(query_img, params)
 
-        if not db:
-            st.warning("Library is empty — nothing to compare against yet.")
+        st.subheader("Detected on your chart")
+        if analysis["primary"] is None:
+            st.error(
+                "No OB → FVG → BOS/liquidity-sweep sequence detected on this chart with the "
+                f"current {query_market} parameters. Either the model genuinely isn't present here, "
+                "or the parameters need adjusting in the sidebar for this pair."
+            )
+            st.image(analysis["cropped"], use_container_width=True)
         else:
-            candidates = [(sid, item) for sid, item in db.items() if item.get("market") == query_market]
-            if same_timeframe_only:
-                candidates = [(sid, item) for sid, item in candidates if item.get("timeframe") == analysis.get("timeframe")]
-            if strict_mode:
-                candidates = [(sid, item) for sid, item in candidates if item.get("valid_model")]
+            p = analysis["primary"]
+            annotated = draw_annotated(analysis["cropped"], analysis["candles"], analysis["H"], p)
+            st.image(annotated, use_container_width=True)
+            st.success(
+                f"Detected a **{p['direction'].upper()}** setup "
+                f"({'liquidity sweep' if p['is_sweep'] else 'break of structure'}) — "
+                f"OB size {p['ob_size']*100:.1f}% · FVG size {p['fvg_size']*100:.1f}% of visible range."
+            )
+            st.caption("This OB zone (orange) is your suggested entry on THIS chart — it's independent of any saved example's entry point.")
 
-            q_struct = struct_vector(p)
-            scored = []
-            for sid, item in candidates:
-                if item.get("valid_model") and item.get("struct") is not None:
-                    if item.get("direction") != p["direction"] or bool(item.get("is_sweep")) != p["is_sweep"]:
-                        continue
-                    s_score = struct_similarity(q_struct, np.array(item["struct"]))
-                    v_score = cosine(analysis["visual"], item["visual"])
-                    total = 0.85 * s_score + 0.15 * max(0.0, v_score)
-                else:
-                    total = 0.15 * max(0.0, cosine(analysis["visual"], item["visual"]))
-                scored.append({"id": sid, "score": total, "item": item})
+            if not db:
+                st.warning("Library is empty — nothing to compare against yet.")
+            else:
+                candidates = [(sid, item) for sid, item in db.items() if item.get("market") == query_market]
+                if same_timeframe_only:
+                    candidates = [(sid, item) for sid, item in candidates if item.get("timeframe") == analysis.get("timeframe")]
+                if strict_mode:
+                    candidates = [(sid, item) for sid, item in candidates if item.get("valid_model")]
 
-            scored.sort(key=lambda x: x["score"], reverse=True)
-            scored = scored[:top_n]
+                q_struct = struct_vector(p)
+                scored = []
+                for sid, item in candidates:
+                    if item.get("valid_model") and item.get("struct") is not None:
+                        if item.get("direction") != p["direction"] or bool(item.get("is_sweep")) != p["is_sweep"]:
+                            continue
+                        s_score = struct_similarity(q_struct, np.array(item["struct"]))
+                        v_score = cosine(analysis["visual"], item["visual"])
+                        total = 0.85 * s_score + 0.15 * max(0.0, v_score)
+                    else:
+                        total = 0.15 * max(0.0, cosine(analysis["visual"], item["visual"]))
+                    scored.append({"id": sid, "score": total, "item": item})
 
-            st.markdown("---")
-            st.subheader(f"📁 Closest matches in your {query_market} library")
-            if not scored:
-                st.info("No comparable setups found under the current filters.")
-            for start in range(0, len(scored), 3):
-                row = scored[start:start + 3]
-                cols = st.columns(len(row))
-                for col, m in zip(cols, row):
-                    with col:
-                        item = m["item"]
-                        st.markdown(f"**{m['id']}** — {m['score']*100:.0f}% match")
-                        show_path = item.get("annotated_image") or item.get("image")
-                        if show_path and os.path.exists(show_path):
-                            st.image(show_path, use_container_width=True)
-                        tag = "✅ Confirmed model" if item.get("valid_model") else "⚠️ No confirmed sequence"
-                        st.caption(tag)
-                        st.write(f"**Timeframe:** {item.get('timeframe')} · **Result:** {item.get('result')}")
-                        st.write(f"**Session:** {item.get('session')}")
-                        if item.get("notes"):
-                            st.caption(item["notes"])
+                scored.sort(key=lambda x: x["score"], reverse=True)
+                scored = scored[:top_n]
 
-# ------------------------------------------------------------
-# Library browser
-# ------------------------------------------------------------
+                st.markdown("---")
+                st.subheader(f"📁 Closest matches in your {query_market} library")
+                if not scored:
+                    st.info("No comparable setups found under the current filters.")
+                for start in range(0, len(scored), 3):
+                    row = scored[start:start + 3]
+                    cols = st.columns(len(row))
+                    for col, m in zip(cols, row):
+                        with col:
+                            item = m["item"]
+                            st.markdown(f"**{m['id']}** — {m['score']*100:.0f}% match")
+                            show_path = item.get("annotated_image") or item.get("image")
+                            if show_path and os.path.exists(show_path):
+                                st.image(show_path, use_container_width=True)
+                            tag = "✅ Confirmed model" if item.get("valid_model") else "⚠️ No confirmed sequence"
+                            st.caption(tag)
+                            st.write(f"**Timeframe:** {item.get('timeframe')} · **Result:** {item.get('result')}")
+                            st.write(f"**Session:** {item.get('session')}")
+                            if item.get("notes"):
+                                st.caption(item["notes"])
 
-st.markdown("---")
-st.header("🗂️ Your Setup Library")
+    # ------------------------------------------------------------
+    # Library browser
+    # ------------------------------------------------------------
 
-if db:
-    browser_cols = st.columns(4)
-    for idx, (sid, item) in enumerate(db.items()):
-        with browser_cols[idx % 4]:
-            show_path = item.get("annotated_image") or item.get("image")
-            if show_path and os.path.exists(show_path):
-                st.image(show_path, use_container_width=True)
-            st.markdown(f"**{sid}**")
-            tag = "✅" if item.get("valid_model") else "⚠️"
-            st.caption(f"{tag} {item.get('market')} · {item.get('timeframe')} · {item.get('result')}")
-else:
-    st.write("No setups saved yet.")
+    st.markdown("---")
+    st.header("🗂️ Your Setup Library")
+
+    if db:
+        browser_cols = st.columns(4)
+        for idx, (sid, item) in enumerate(db.items()):
+            with browser_cols[idx % 4]:
+                show_path = item.get("annotated_image") or item.get("image")
+                if show_path and os.path.exists(show_path):
+                    st.image(show_path, use_container_width=True)
+                st.markdown(f"**{sid}**")
+                tag = "✅" if item.get("valid_model") else "⚠️"
+                st.caption(f"{tag} {item.get('market')} · {item.get('timeframe')} · {item.get('result')}")
+    else:
+        st.write("No setups saved yet.")
+
+
+JOURNAL_FILE = os.path.join(STORAGE_DIR, "journal.json")
+
+
+def load_journal():
+    if not os.path.exists(JOURNAL_FILE):
+        return []
+    try:
+        with open(JOURNAL_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_journal(entries):
+    with open(JOURNAL_FILE, "w", encoding="utf-8") as f:
+        json.dump(entries, f)
+
+
+def new_journal_id(entries):
+    n = 1
+    existing = {e["id"] for e in entries}
+    while f"JRNL_{n:04d}" in existing:
+        n += 1
+    return f"JRNL_{n:04d}"
+
+
+def compute_r(entry, sl, tp, result):
+    if result == "Break-even":
+        return 0.0
+    try:
+        entry_f, sl_f, tp_f = float(entry), float(sl), float(tp)
+        risk = abs(entry_f - sl_f)
+        reward = abs(tp_f - entry_f)
+        rr = reward / risk if risk > 0 else None
+    except (ValueError, TypeError):
+        rr = None
+    if result == "Win":
+        return rr if rr is not None else 1.0
+    if result == "Loss":
+        return -1.0
+    return 0.0
+
+
+with tab2:
+    st.header("📒 Trade Journal")
+    st.caption("Every trade you've actually taken — separate from the setup library above, which is for backtesting patterns.")
+
+    journal = load_journal()
+
+    with st.form("journal_form", clear_on_submit=True):
+        c1, c2, c3 = st.columns(3)
+        j_date = c1.date_input("Date")
+        j_pair = c2.selectbox("Pair", MARKETS, key="j_pair")
+        j_dir = c3.selectbox("Direction", ["Buy", "Sell"], key="j_dir")
+
+        c4, c5, c6 = st.columns(3)
+        j_setup = c4.selectbox("Setup", ["OB+FVG+BOS", "OB+FVG+Sweep", "Other"], key="j_setup")
+        j_session = c5.selectbox("Session", ["Asia", "London", "New York", "Overlap"], key="j_session")
+        j_result = c6.selectbox("Result", ["Win", "Loss", "Break-even"], key="j_result")
+
+        c7, c8, c9 = st.columns(3)
+        j_entry = c7.text_input("Entry price", key="j_entry")
+        j_sl = c8.text_input("Stop loss", key="j_sl")
+        j_tp = c9.text_input("Take profit", key="j_tp")
+
+        j_notes = st.text_area("Notes — what you saw, how you felt, what to repeat or fix", key="j_notes")
+        j_screenshot = st.file_uploader("Optional screenshot", type=["png", "jpg", "jpeg"], key="j_screenshot")
+
+        if st.form_submit_button("💾 Save trade"):
+            entry_id = new_journal_id(journal)
+            image_path = None
+            if j_screenshot is not None:
+                image_path = os.path.join(STORAGE_DIR, f"{entry_id}.png")
+                Image.open(j_screenshot).convert("RGB").save(image_path, "PNG")
+
+            journal.append({
+                "id": entry_id,
+                "date": str(j_date),
+                "pair": j_pair,
+                "dir": j_dir,
+                "setup": j_setup,
+                "session": j_session,
+                "result": j_result,
+                "entry": j_entry,
+                "sl": j_sl,
+                "tp": j_tp,
+                "r": compute_r(j_entry, j_sl, j_tp, j_result),
+                "notes": j_notes,
+                "image": image_path,
+            })
+            save_journal(journal)
+            st.success(f"Saved {entry_id}")
+            st.rerun()
+
+    st.markdown("---")
+    j_filter = st.selectbox("Filter by pair", ["All"] + MARKETS, key="j_filter")
+    filtered = [e for e in journal if j_filter == "All" or e["pair"] == j_filter]
+    chrono = sorted(filtered, key=lambda e: e["date"])  # oldest first, for stats/curve
+    newest_first = list(reversed(chrono))
+
+    wins = sum(1 for e in chrono if e["result"] == "Win")
+    losses = sum(1 for e in chrono if e["result"] == "Loss")
+    decided = wins + losses
+    win_rate = round(100 * wins / decided) if decided else 0
+    total_r = sum(e["r"] for e in chrono)
+    avg_r = total_r / len(chrono) if chrono else 0.0
+
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("Trades logged", len(chrono))
+    s2.metric("Win rate", f"{win_rate}%")
+    s3.metric("Total R", f"{total_r:+.1f}R")
+    s4.metric("Avg R / trade", f"{avg_r:+.2f}R")
+
+    st.subheader("Equity curve (cumulative R)")
+    if len(chrono) >= 2:
+        cum, curve = 0.0, [0.0]
+        for e in chrono:
+            cum += e["r"]
+            curve.append(cum)
+        st.line_chart(curve)
+    else:
+        st.caption("Log a couple more trades to see the curve.")
+
+    st.subheader("Ledger")
+    if not newest_first:
+        st.caption("No trades logged yet.")
+    for e in newest_first:
+        cols = st.columns([1, 3, 1]) if e.get("image") else st.columns([4, 1])
+        if e.get("image") and os.path.exists(e["image"]):
+            with cols[0]:
+                st.image(e["image"], use_container_width=True)
+            text_col, del_col = cols[1], cols[2]
+        else:
+            text_col, del_col = cols[0], cols[1]
+
+        with text_col:
+            r_val = e["r"]
+            r_str = f"{r_val:+.2f}R"
+            st.markdown(f"**{e['date']} · {e['pair']} · {e['dir']} · {e['setup']}** — {e['result']} ({r_str})")
+            st.caption(f"Session: {e['session']} · Entry {e.get('entry','—')} · SL {e.get('sl','—')} · TP {e.get('tp','—')}")
+            if e.get("notes"):
+                st.write(e["notes"])
+        with del_col:
+            if st.button("Delete", key=f"deljrnl_{e['id']}"):
+                if e.get("image") and os.path.exists(e["image"]):
+                    os.remove(e["image"])
+                journal = [x for x in journal if x["id"] != e["id"]]
+                save_journal(journal)
+                st.rerun()
+        st.markdown("---")
 
 st.markdown("---")
 st.caption(
