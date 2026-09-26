@@ -191,6 +191,29 @@ a{color:#FF9A70!important}
 hr{border-color:rgba(245,240,232,.08)!important}
 footer{visibility:hidden}
 
+/* Native nav row (replaces the old <a href> links — no more new-tab navigation) */
+div[data-testid="stHorizontalBlock"] .stButton>button{
+  min-height:38px;font-size:12.5px;padding:0 6px;border-radius:10px;
+  transition:all .15s ease;box-shadow:none!important
+}
+button[kind="secondary"]{
+  background:#171614!important;color:#C9C2B7!important;
+  border:1px solid rgba(245,240,232,.10)!important;font-weight:700!important
+}
+button[kind="secondary"]:hover{
+  background:#211f1c!important;color:#F6F0E8!important;
+  border-color:rgba(245,240,232,.20)!important
+}
+button[kind="primary"]{
+  background:linear-gradient(135deg,#FF7A45,#E9683D)!important;
+  color:#171311!important;border-color:#FF7A45!important
+}
+/* Chat bubbles for the AI Assistant */
+[data-testid="stChatMessage"]{
+  background:rgba(22,22,20,.72)!important;border:1px solid var(--line)!important;
+  border-radius:16px!important
+}
+
 @media(max-width:1050px){
   .topbar{align-items:flex-start;flex-direction:column}
   .topbar-meta{margin-left:0}
@@ -260,6 +283,16 @@ def num(x):
 
 T=trades()
 
+def hero(kicker, title, sub):
+    st.markdown(
+        f'<div class="temexy-hero"><div class="hero-kicker">{kicker}</div>'
+        f'<div class="hero-title">{title}</div><div class="hero-sub">{sub}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+def section(title):
+    st.markdown(f'<div class="section-title"><span class="section-dot"></span>{title}</div>', unsafe_allow_html=True)
+
 # ------------------------------------------------------------
 # ------------------------------------------------------------
 # TOP NAVIGATION — clean product-style header
@@ -271,23 +304,51 @@ page_map={
     'detail':'🔎 Trade Detail',
     'analytics':'📊 Analytics',
     'setups':'📚 Setup Library',
+    'assistant':'🤖 AI Assistant',
     'settings':'⚙️ Settings',
 }
-current_key=st.query_params.get('page','dashboard')
-if current_key not in page_map: current_key="dashboard"
+NAV_ITEMS=[('dashboard','🏠 Dashboard'),('new-trade','➕ New Trade'),('history','📖 Trade History'),
+           ('detail','🔎 Trade Detail'),('analytics','📊 Analytics'),('setups','📚 Setup Library'),
+           ('assistant','🤖 AI Assistant'),('settings','⚙️ Settings')]
+
+if 'page' not in st.session_state:
+    st.session_state.page='dashboard'
+current_key=st.session_state.page
+if current_key not in page_map: current_key='dashboard'
 page=page_map[current_key]
+
 wins=sum(x['result']=='Win' for x in T) if T else 0
 net=sum(float(x['actual_r'] or 0) for x in T) if T else 0
 win_rate=(wins/len(T)*100) if T else 0
-nav_html='<div class="topbar"><div class="brand"><div class="brand-mark"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7 29V16L13 22L19 13L25 19L33 7" stroke="#171311" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 9V29M8.5 13H15.5M8.5 19H15.5" stroke="#F8E5C2" stroke-width="2.2" stroke-linecap="round"/></svg></div><div><div class="brand-name">TEMEXY</div><div class="brand-tag">TRADE JOURNAL</div></div></div><div class="nav-wrap">'
-for key,label in [('dashboard','Dashboard'),('new-trade','New Trade'),('history','Trade History'),('detail','Trade Detail'),('analytics','Analytics'),('setups','Setup Library'),('settings','Settings')]:
-    active=' active' if key==current_key else ''
-    nav_html += f'<a class="nav-link{active}" href="?page={key}">{label}</a>'
-nav_html += f'<div class="topbar-meta"><span>TRADES <b>{len(T)}</b></span><span>WIN RATE <b>{win_rate:.1f}%</b></span><span>NET <b>{net:+.2f}R</b></span></div></div>'
-st.markdown(nav_html, unsafe_allow_html=True)
 
-if page=='🏠 Dashboard':
-    st.markdown('<div class="temexy-hero"><div class="hero-kicker">TEMEXY • PERFORMANCE CENTER</div><div class="hero-title">Trade with evidence. Review without emotion.</div><div class="hero-sub">Your setups, execution, risk, psychology and results — organized into one clean trading command center.</div></div>', unsafe_allow_html=True); st.markdown('<div class="section-title"><span class="section-dot"></span>Performance Snapshot</div>', unsafe_allow_html=True)
+# Brand + live stats strip (pure display, no links — nothing here can hijack a tab)
+brand_html=(
+  '<div class="topbar"><div class="brand"><div class="brand-mark"><svg viewBox="0 0 40 40" fill="none" '
+  'xmlns="http://www.w3.org/2000/svg"><path d="M7 29V16L13 22L19 13L25 19L33 7" stroke="#171311" stroke-width="3" '
+  'stroke-linecap="round" stroke-linejoin="round"/><path d="M12 9V29M8.5 13H15.5M8.5 19H15.5" stroke="#F8E5C2" '
+  'stroke-width="2.2" stroke-linecap="round"/></svg></div><div><div class="brand-name">TEMEXY</div>'
+  '<div class="brand-tag">TRADE JOURNAL</div></div></div>'
+  f'<div class="topbar-meta"><span>TRADES <b>{len(T)}</b></span><span>WIN RATE <b>{win_rate:.1f}%</b></span>'
+  f'<span>NET <b>{net:+.2f}R</b></span></div></div>'
+)
+st.markdown(brand_html, unsafe_allow_html=True)
+
+# Real Streamlit buttons drive navigation now — a click only changes session_state
+# and reruns the script, so it can never open a new browser tab the way the old
+# <a href="?page=..."> links sometimes did.
+nav_cols=st.columns(len(NAV_ITEMS))
+for col,(key,label) in zip(nav_cols,NAV_ITEMS):
+    with col:
+        if st.button(label, key=f'nav_{key}', use_container_width=True,
+                     type=('primary' if key==current_key else 'secondary')):
+            st.session_state.page=key
+            st.rerun()
+st.write('')
+
+if current_key=='dashboard':
+    hero('TEMEXY • PERFORMANCE CENTER', 'Trade with evidence. Review without emotion.',
+         'Your setups, execution, risk, psychology and results — organized into one clean trading command center.')
+    section('Performance Snapshot')
     if not T: st.info('No trades yet. Go to ➕ New Trade.')
     else:
         d=pd.DataFrame(T); d['actual_r']=pd.to_numeric(d.actual_r,errors='coerce').fillna(0); d['pnl_money']=pd.to_numeric(d.pnl_money,errors='coerce').fillna(0)
@@ -301,8 +362,8 @@ if page=='🏠 Dashboard':
         a,b,c=st.columns(3); a.metric('Avg Rule Adherence',f'{pd.to_numeric(d.rule_adherence,errors="coerce").mean():.1f}/10'); b.metric('Avg Setup Quality',f'{pd.to_numeric(d.setup_quality,errors="coerce").mean():.1f}/10'); c.metric('Avg Confidence',f'{pd.to_numeric(d.confidence,errors="coerce").mean():.1f}/10')
         st.subheader('Recent Trades'); st.dataframe(d.head(10)[['id','trade_date','market','direction','timeframe','setup_name','result','actual_r','pnl_money']],use_container_width=True,hide_index=True)
 
-elif page=='➕ New Trade':
-    st.title('➕ Record New Trade'); st.caption('Keep it factual. Keep it quick. Build a database you can trust.'); st.markdown('<div class="small-muted">A clean record now saves you from guessing later.</div>', unsafe_allow_html=True)
+elif current_key=='new-trade':
+    hero('LOG IT WHILE IT\'S FRESH', 'Record a new trade', 'Keep it factual, keep it quick — a clean record now saves you from guessing later.')
     with st.form('trade'):
         st.subheader('1. Identification'); a,b,c=st.columns(3)
         with a: td=st.date_input('Date',date.today()); market=st.selectbox('Market',['XAUUSD','USDCHF','BTCUSD','EURUSD','US100','Other'])
@@ -335,8 +396,8 @@ elif page=='➕ New Trade':
         data={'trade_date':td.isoformat(),'trade_time':tt.strftime('%H:%M'),'market':market,'direction':direction,'timeframe':tf,'session':session,'setup_name':setup,'setup_tags':tags,'htf_bias':bias,'entry':entry,'stop_loss':sl,'take_profit':tp,'exit_price':exitp,'planned_rr':prr,'actual_r':ar,'pnl_money':pnl,'risk_percent':riskpct,'risk_money':riskmoney,'result':result,'confidence':conf,'rule_adherence':adherence,'setup_quality':quality,'news_event':news,'market_context':context,'reason':reason,'execution':execution,'emotion_before':eb,'emotion_during':ed,'emotion_after':ea,'mistake':mistake,'lesson':lesson,'what_went_well':went,'what_to_change':change,'screenshot_before':saveimg(before,stamp+'_before'),'screenshot_setup':saveimg(setupimg,stamp+'_setup'),'screenshot_after':saveimg(after,stamp+'_after'),'created_at':datetime.now().isoformat()}
         i=add(data); st.success(f'Trade #{i} saved.'); st.balloons()
 
-elif page=='📖 Trade History':
-    st.title('📖 Complete Trade History')
+elif current_key=='history':
+    hero('THE FULL RECORD', 'Trade history', 'Every trade you\'ve logged, filterable by market, result, direction and setup.')
     if not T: st.info('No trades recorded yet.')
     else:
         d=pd.DataFrame(T); a,b,c,e=st.columns(4)
@@ -348,39 +409,39 @@ elif page=='📖 Trade History':
         if q:x=x[x.setup_name.fillna('').str.contains(q,case=False)|x.setup_tags.fillna('').str.contains(q,case=False)]
         st.write(f'Showing **{len(x)}** of **{len(d)}** trades.'); st.dataframe(x[['id','trade_date','trade_time','market','direction','timeframe','session','setup_name','result','actual_r','pnl_money','rule_adherence']],use_container_width=True,hide_index=True)
 
-elif page=='🔎 Trade Detail':
-    st.title('🔎 Trade Detail')
+elif current_key=='detail':
+    hero('ONE TRADE, IN FULL', 'Trade detail', 'Everything you recorded about a single trade — numbers, context, psychology and chart evidence.')
     if not T: st.info('No trades yet.')
     else:
         opts={f"#{t['id']} · {t['trade_date']} · {t['market']} · {t['direction']} · {t['result']}":t['id'] for t in T}; label=st.selectbox('Select trade',list(opts)); t=get(opts[label])
         a,b,c,d,e=st.columns(5); a.metric('Result',t['result']); b.metric('R',num(t['actual_r'])); c.metric('P/L',money(t['pnl_money'])); d.metric('Planned RR',num(t['planned_rr'])); e.metric('Rules',f"{t['rule_adherence']}/10")
         l,r=st.columns(2)
         with l:
-            st.subheader('📌 Trade Information'); st.write(f"**Date:** {t['trade_date']} {t['trade_time']}"); st.write(f"**Market:** {t['market']}"); st.write(f"**Direction:** {t['direction']}"); st.write(f"**Timeframe:** {t['timeframe']}"); st.write(f"**Session:** {t['session']}"); st.write(f"**Setup:** {t['setup_name']}"); st.write(f"**Tags:** {t['setup_tags']}"); st.write(f"**HTF Bias:** {t['htf_bias']}"); st.write(f"**News:** {t['news_event']}")
+            section('📌 Trade Information'); st.write(f"**Date:** {t['trade_date']} {t['trade_time']}"); st.write(f"**Market:** {t['market']}"); st.write(f"**Direction:** {t['direction']}"); st.write(f"**Timeframe:** {t['timeframe']}"); st.write(f"**Session:** {t['session']}"); st.write(f"**Setup:** {t['setup_name']}"); st.write(f"**Tags:** {t['setup_tags']}"); st.write(f"**HTF Bias:** {t['htf_bias']}"); st.write(f"**News:** {t['news_event']}")
         with r:
-            st.subheader('💰 Numbers'); st.write(f"**Entry:** {num(t['entry'])}"); st.write(f"**SL:** {num(t['stop_loss'])}"); st.write(f"**TP:** {num(t['take_profit'])}"); st.write(f"**Exit:** {num(t['exit_price'])}"); st.write(f"**Risk:** {num(t['risk_percent'])}% / {money(t['risk_money'])}"); st.write(f"**Confidence:** {t['confidence']}/10"); st.write(f"**Setup Quality:** {t['setup_quality']}/10")
-        st.subheader('🖼️ Chart Record'); cols=st.columns(3)
+            section('💰 Numbers'); st.write(f"**Entry:** {num(t['entry'])}"); st.write(f"**SL:** {num(t['stop_loss'])}"); st.write(f"**TP:** {num(t['take_profit'])}"); st.write(f"**Exit:** {num(t['exit_price'])}"); st.write(f"**Risk:** {num(t['risk_percent'])}% / {money(t['risk_money'])}"); st.write(f"**Confidence:** {t['confidence']}/10"); st.write(f"**Setup Quality:** {t['setup_quality']}/10")
+        section('🖼️ Chart Record'); cols=st.columns(3)
         for col,title,k in zip(cols,['Before Entry','Setup / Entry','After Exit'],['screenshot_before','screenshot_setup','screenshot_after']):
             with col:
                 st.markdown(f'**{title}**'); p=t[k]
                 if p and os.path.exists(p):st.image(p,use_container_width=True)
                 else:st.caption('No image.')
         for title,k in [('🧠 Why I Took It','reason'),('🌍 Market Context','market_context'),('⚙️ Execution','execution'),('😐 Before','emotion_before'),('😰 During','emotion_during'),('😌 After','emotion_after'),('✅ What Went Well','what_went_well'),('❌ Mistake','mistake'),('💡 Lesson','lesson'),('🔁 What I Will Change','what_to_change')]:
-            if t[k]: st.subheader(title); st.write(t[k])
+            if t[k]: section(title); st.write(t[k])
         if st.button('🗑️ Delete This Trade'): remove(t['id']); st.success('Deleted.'); st.rerun()
 
-elif page=='📊 Analytics':
-    st.title('📊 Trading Analytics'); st.caption('Let the journal show you where your performance comes from.')
+elif current_key=='analytics':
+    hero('WHERE YOUR EDGE ACTUALLY LIVES', 'Trading analytics', 'Let the journal show you where your performance really comes from — by market, setup, session and direction.')
     if not T: st.info('Record trades first.')
     else:
         d=pd.DataFrame(T); d['actual_r']=pd.to_numeric(d.actual_r,errors='coerce').fillna(0); d['rule_adherence']=pd.to_numeric(d.rule_adherence,errors='coerce'); d['setup_quality']=pd.to_numeric(d.setup_quality,errors='coerce'); d['confidence']=pd.to_numeric(d.confidence,errors='coerce')
         for title,col in [('By Market','market'),('By Setup','setup_name'),('By Session','session'),('By Direction','direction')]:
-            st.subheader(title); g=d.groupby(col).agg(Trades=('id','count'),Net_R=('actual_r','sum'),Avg_R=('actual_r','mean'),Wins=('result',lambda x:(x=='Win').sum()),Losses=('result',lambda x:(x=='Loss').sum())).reset_index(); g['Win_Rate_%']=g.Wins/g.Trades*100; st.dataframe(g,use_container_width=True,hide_index=True)
-        st.subheader('Discipline vs Result'); st.dataframe(d.groupby('result')[['rule_adherence','setup_quality','confidence']].mean(),use_container_width=True)
-        st.subheader('Monthly R'); d['month']=pd.to_datetime(d.trade_date).dt.to_period('M').astype(str); st.bar_chart(d.groupby('month').actual_r.sum())
+            section(title); g=d.groupby(col).agg(Trades=('id','count'),Net_R=('actual_r','sum'),Avg_R=('actual_r','mean'),Wins=('result',lambda x:(x=='Win').sum()),Losses=('result',lambda x:(x=='Loss').sum())).reset_index(); g['Win_Rate_%']=g.Wins/g.Trades*100; st.dataframe(g,use_container_width=True,hide_index=True)
+        section('Discipline vs Result'); st.dataframe(d.groupby('result')[['rule_adherence','setup_quality','confidence']].mean(),use_container_width=True)
+        section('Monthly R'); d['month']=pd.to_datetime(d.trade_date).dt.to_period('M').astype(str); st.bar_chart(d.groupby('month').actual_r.sum())
 
-elif page=='📚 Setup Library':
-    st.markdown('<div class="temexy-hero"><div class="hero-kicker">VISUAL PATTERN MEMORY</div><div class="hero-title">📚 Setup Library</div><div class="hero-sub">Upload a new chart and retrieve the closest historical formations. Your old Buy/Sell labels do not control the visual match.</div></div>', unsafe_allow_html=True)
+elif current_key=='setups':
+    hero('VISUAL PATTERN MEMORY', 'Setup library', 'Upload a new chart and retrieve the closest historical formations. Your old Buy/Sell labels do not control the visual match.')
     q=st.file_uploader('New chart to compare',type=['png','jpg','jpeg'])
     if q and T:
         qv=feature(q); res=[]
@@ -396,16 +457,120 @@ elif page=='📚 Setup Library':
                 with col:
                     st.image(p,use_container_width=True); st.markdown(f"**#{t['id']} — {score*100:.1f}% visual similarity**"); st.write(f"{t['market']} · {t['timeframe']} · {t['direction']} · {t['result']}"); st.caption(t['setup_name'] or 'Unnamed setup')
     elif not T: st.info('Record trades with screenshots first.')
-    st.markdown('---'); st.subheader('Saved Setup Screenshots')
+    st.markdown('---'); section('Saved Setup Screenshots')
     for t in T:
         p=t.get('screenshot_setup') or t.get('screenshot_before')
         if p and os.path.exists(p):
             with st.expander(f"#{t['id']} · {t['market']} · {t['setup_name']} · {t['result']}"): st.image(p,width=700); st.write(f"{t['direction']} · {t['timeframe']} · {t['session']} · {t['actual_r']}R")
 
-else:
-    st.title('⚙️ Journal Settings')
+elif current_key=='assistant':
+    hero('YOUR JOURNAL, ASKED A QUESTION', 'AI assistant', 'Ask it about your own trades — it reads a summary of your logged performance before answering.')
+
+    with st.expander('🔑 API key & model', expanded=not st.session_state.get('anthropic_key')):
+        st.caption(
+            'This runs from *your own* Anthropic API key — Temexy has no server, so there\'s nowhere else '
+            'for it to come from. Get a key at console.anthropic.com. It stays in this browser session only; '
+            'it is never written to the journal database or disk.'
+        )
+        key_input=st.text_input('Anthropic API key', type='password',
+                                 value=st.session_state.get('anthropic_key',''), key='key_input_field')
+        model_choice=st.selectbox('Model', ['claude-sonnet-5','claude-opus-5-5','claude-haiku-4-5-20251001'],
+                                   index=['claude-sonnet-5','claude-opus-5-5','claude-haiku-4-5-20251001'].index(
+                                       st.session_state.get('anthropic_model','claude-sonnet-5')))
+        if st.button('Save key for this session'):
+            st.session_state.anthropic_key=key_input
+            st.session_state.anthropic_model=model_choice
+            st.success('Saved for this session.')
+
+    def _journal_summary():
+        if not T: return 'The journal is empty — no trades logged yet.'
+        d=pd.DataFrame(T)
+        d['actual_r']=pd.to_numeric(d.actual_r,errors='coerce').fillna(0)
+        wins=int((d.result=='Win').sum()); losses=int((d.result=='Loss').sum()); total=len(d)
+        by_setup=d.groupby('setup_name')['actual_r'].agg(['count','sum','mean']).round(2).to_dict('index')
+        by_market=d.groupby('market')['actual_r'].agg(['count','sum','mean']).round(2).to_dict('index')
+        recent_notes=[f"- {r['trade_date']} {r['market']} {r['result']} ({r['actual_r']}R): "
+                      f"mistake={r.get('mistake') or 'none noted'}; lesson={r.get('lesson') or 'none noted'}"
+                      for r in d.tail(8).to_dict('records')]
+        return (
+            f"Total trades: {total}. Wins: {wins}. Losses: {losses}. Net R: {d.actual_r.sum():+.2f}. "
+            f"Avg R: {d.actual_r.mean():+.2f}.\n"
+            f"By setup: {by_setup}\nBy market: {by_market}\n"
+            f"Last 8 trades (notes):\n" + "\n".join(recent_notes)
+        )
+
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history=[]
+
+    def _call_claude(user_text):
+        api_key=st.session_state.get('anthropic_key','') or os.environ.get('ANTHROPIC_API_KEY','')
+        if not api_key:
+            return "I need an API key first — add one above under '🔑 API key & model'."
+        try:
+            import requests
+        except ImportError:
+            return "This feature needs the `requests` package — install it with `pip install requests`."
+        system_prompt=(
+            "You are a trading-performance assistant embedded in the user's personal trade journal app. "
+            "Answer using ONLY the journal summary given below plus the conversation — do not invent trades "
+            "or numbers that aren't there. Be direct and specific; point to actual setups/markets/mistakes "
+            "from the data when relevant. Keep answers concise.\n\nJOURNAL SUMMARY:\n" + _journal_summary()
+        )
+        messages=[{"role":m["role"],"content":m["content"]} for m in st.session_state.chat_history]
+        messages.append({"role":"user","content":user_text})
+        try:
+            resp=requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key":api_key,
+                    "anthropic-version":"2023-06-01",
+                    "content-type":"application/json",
+                },
+                json={
+                    "model":st.session_state.get('anthropic_model','claude-sonnet-5'),
+                    "max_tokens":700,
+                    "system":system_prompt,
+                    "messages":messages,
+                },
+                timeout=30,
+            )
+            resp.raise_for_status()
+            blocks=resp.json().get("content",[])
+            return "".join(b.get("text","") for b in blocks if b.get("type")=="text") or "(empty response)"
+        except Exception as e:
+            return f"Request failed: {e}"
+
+    quick1,quick2=st.columns(2)
+    if quick1.button('📋 Summarize my performance', use_container_width=True):
+        st.session_state.chat_history.append({"role":"user","content":"Summarize my overall performance and the single biggest thing I should fix."})
+        st.session_state.chat_history.append({"role":"assistant","content":_call_claude(st.session_state.chat_history[-1]["content"])})
+    if quick2.button('🧠 What mistake do I repeat most?', use_container_width=True):
+        st.session_state.chat_history.append({"role":"user","content":"Looking at my logged mistakes across trades, what pattern repeats the most and how should I address it?"})
+        st.session_state.chat_history.append({"role":"assistant","content":_call_claude(st.session_state.chat_history[-1]["content"])})
+
+    for m in st.session_state.chat_history:
+        with st.chat_message(m["role"]):
+            st.write(m["content"])
+
+    user_msg=st.chat_input('Ask about your trades...')
+    if user_msg:
+        st.session_state.chat_history.append({"role":"user","content":user_msg})
+        with st.chat_message("user"):
+            st.write(user_msg)
+        with st.chat_message("assistant"):
+            with st.spinner('Reading your journal...'):
+                reply=_call_claude(user_msg)
+            st.write(reply)
+        st.session_state.chat_history.append({"role":"assistant","content":reply})
+
+    if st.session_state.chat_history and st.button('Clear conversation'):
+        st.session_state.chat_history=[]
+        st.rerun()
+
+elif current_key=='settings':
+    hero('WHAT THIS JOURNAL TRACKS', 'Settings', 'Where your data lives, and everything this journal is built to record.')
     st.info('This journal records the complete trade lifecycle: setup, market context, numbers, execution, psychology, mistakes, lessons, and chart evidence.')
-    st.subheader('Included');
+    section('Included');
     for x in ['Trade date/time','Market, direction, timeframe and session','Setup name and tags','HTF bias','Entry, SL, TP and exit','Planned RR, actual R, risk % and money','Win/Loss/BE','Confidence, setup quality and rule adherence','News and market context','Reason for entry and execution notes','Before/during/after emotions','Mistakes, lessons and next change','Before/setup/after screenshots','Visual setup similarity search','Market/setup/session/direction analytics','Equity curve and monthly performance']:
         st.write('✅ '+x)
     st.warning('Important for Streamlit Cloud: this version stores the SQLite database and screenshots in the app filesystem. For a permanent cloud journal, connect persistent storage/database before building a large archive.')
