@@ -445,4 +445,3 @@ st.caption(
     "TEMEXY LIBRARY — Built for visual backtesting and pattern retrieval. "
     "Always inspect the actual chart before making a trading decision."
 )
-
