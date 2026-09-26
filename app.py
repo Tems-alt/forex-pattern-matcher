@@ -22,15 +22,23 @@ def load_clip_model():
 model, processor = load_clip_model()
 
 def get_image_embedding(image):
+    """Extracts visual embedding vector safely using numpy."""
     inputs = processor(images=image, return_tensors="pt")
     with torch.no_grad():
         outputs = model.get_image_features(**inputs)
-        # Extract tensor if wrapped in model output object
-        tensor = outputs.image_embeds if hasattr(outputs, 'image_embeds') else outputs
-    # Calculate vector norm safely
-    norm = torch.linalg.vector_norm(tensor, dim=-1, keepdim=True)
-    normalized = tensor / norm
-    return normalized.cpu().numpy().flatten()
+        # Handle both tensor outputs and object outputs safely
+        if hasattr(outputs, 'image_embeds'):
+            vector = outputs.image_embeds.cpu().numpy().flatten()
+        elif hasattr(outputs, 'pooler_output'):
+            vector = outputs.pooler_output.cpu().numpy().flatten()
+        else:
+            vector = outputs.cpu().numpy().flatten()
+            
+    # Normalize vector to unit length for cosine similarity
+    norm = np.linalg.norm(vector)
+    if norm > 0:
+        vector = vector / norm
+    return vector
 
 def load_database():
     if os.path.exists(EMBEDDINGS_FILE):
@@ -44,6 +52,9 @@ def save_database(db):
 
 db = load_database()
 
+# ---------------------------------------------------------
+# SIDEBAR: UPLOAD SETUPS
+# ---------------------------------------------------------
 st.sidebar.header("📥 Save Past Setup")
 uploaded_setup = st.sidebar.file_uploader("Upload Past Setup Screenshot", type=["png", "jpg", "jpeg"], key="upload_setup")
 setup_label = st.sidebar.text_input("Setup Name / Pair (e.g. EURUSD Double Bottom)", key="setup_name")
@@ -65,6 +76,9 @@ if st.sidebar.button("Save Setup"):
 st.sidebar.markdown("---")
 st.sidebar.write(f"📁 **Total Saved Setups:** {len(db)}")
 
+# ---------------------------------------------------------
+# MAIN AREA: MATCHING
+# ---------------------------------------------------------
 st.subheader("🔍 Match Live Chart")
 live_chart = st.file_uploader("Upload Current Market Screenshot to Find Matches", type=["png", "jpg", "jpeg"])
 
