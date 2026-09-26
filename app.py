@@ -1,849 +1,202 @@
-import os
-import json
-import hashlib
+import os, sqlite3, uuid
+from pathlib import Path
+from datetime import datetime, date, time
 import numpy as np
+import pandas as pd
 import streamlit as st
-from PIL import Image, ImageDraw
+from PIL import Image, ImageEnhance, ImageFilter
 
-# ============================================================
-# TEMEXY PRICE-ACTION SETUP LIBRARY (v3 — model-aware edition)
-#
-# This version stops treating every screenshot as "just a picture"
-# and instead reconstructs an approximate candlestick series from
-# the pixels, then checks it against YOUR exact model:
-#
-#   1. A break of structure (BOS) OR a liquidity sweep.
-#   2. The leg that causes that BOS/sweep must contain an FVG
-#      (fair value gap) that formed BEFORE the break/sweep point.
-#   3. Before that FVG, there must be an order block (OB) — the
-#      last opposite-colored candle before the impulsive leg
-#      started. That OB is the entry.
-#
-# Because your 3 pairs behave differently, the two parameters that
-# actually need to flex per instrument — swing lookback and the
-# minimum FVG size (as a % of the visible price range, since we
-# don't have real price data from a screenshot) — are configurable
-# per market and saved to config.json.
-#
-# IMPORTANT HONESTY NOTE (read this before trusting the output):
-# Candle extraction is done by color-segmenting pixels (green =
-# bullish, near-black = bearish) and grouping columns into candles.
-# It works well on a CLEAN chart screenshot. If you upload a chart
-# that already has your own OB/FVG boxes drawn on it, those overlay
-# colors can occasionally get misread as candle pixels. For best
-# accuracy, save/query with plain candlestick screenshots and let
-# this app draw the OB/FVG/BOS zones itself — that's also how you
-# get a second, independent check on your own manual marking.
-# ============================================================
+st.set_page_config(page_title='Temexy Trade Journal', page_icon='📈', layout='wide')
+BASE=Path('trade_journal_data'); IMG=BASE/'images'; DB=BASE/'trades.db'; IMG.mkdir(parents=True,exist_ok=True)
 
-st.set_page_config(page_title="Temexy Setup Library", page_icon="📈", layout="wide")
+def conn():
+    c=sqlite3.connect(DB); c.row_factory=sqlite3.Row; return c
 
-st.title("📚 Temexy Price-Action Setup Library — Model Edition")
-st.caption(
-    "Detects your exact model — BOS/liquidity sweep → FVG before the sweep → OB before "
-    "the FVG — from the raw candles in a screenshot, then matches new charts against "
-    "your saved library using that structure, not just visual similarity."
-)
+def init():
+    c=conn(); c.execute('''CREATE TABLE IF NOT EXISTS trades(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, trade_date TEXT, trade_time TEXT, market TEXT,
+    direction TEXT, timeframe TEXT, session TEXT, setup_name TEXT, setup_tags TEXT,
+    htf_bias TEXT, entry REAL, stop_loss REAL, take_profit REAL, exit_price REAL,
+    planned_rr REAL, actual_r REAL, pnl_money REAL, risk_percent REAL, risk_money REAL,
+    result TEXT, confidence INTEGER, rule_adherence INTEGER, setup_quality INTEGER,
+    news_event TEXT, market_context TEXT, reason TEXT, execution TEXT,
+    emotion_before TEXT, emotion_during TEXT, emotion_after TEXT, mistake TEXT,
+    lesson TEXT, what_went_well TEXT, what_to_change TEXT, screenshot_before TEXT,
+    screenshot_setup TEXT, screenshot_after TEXT, created_at TEXT)'''); c.commit(); c.close()
+init()
 
-STORAGE_DIR = "setup_library"
-DB_FILE = os.path.join(STORAGE_DIR, "library.json")
-CONFIG_FILE = os.path.join(STORAGE_DIR, "config.json")
-os.makedirs(STORAGE_DIR, exist_ok=True)
+def trades():
+    c=conn(); x=[dict(r) for r in c.execute('SELECT * FROM trades ORDER BY trade_date DESC,trade_time DESC,id DESC')]; c.close(); return x
 
-MARKETS = ["XAUUSD", "USDCHF", "BTCUSD", "Other"]
+def get(tid):
+    c=conn(); r=c.execute('SELECT * FROM trades WHERE id=?',(tid,)).fetchone(); c.close(); return dict(r) if r else None
 
-DEFAULT_PARAMS = {
-    "swing_lookback": 3,     # candles on each side to confirm a swing high/low
-    "min_fvg_frac": 0.03,    # minimum FVG size as a fraction of the visible price range
-}
+def add(d):
+    c=conn(); cols=list(d); c.execute(f"INSERT INTO trades({','.join(cols)}) VALUES({','.join(['?']*len(cols))})",[d[x] for x in cols]); c.commit(); i=c.execute('SELECT last_insert_rowid()').fetchone()[0]; c.close(); return i
 
-STRUCT_SIZE = (96, 96)
-CELL_SIZE = 16
-N_BINS = 9
+def remove(tid):
+    t=get(tid)
+    if t:
+        for k in ('screenshot_before','screenshot_setup','screenshot_after'):
+            p=t.get(k)
+            if p:
+                try: Path(p).unlink(missing_ok=True)
+                except: pass
+    c=conn(); c.execute('DELETE FROM trades WHERE id=?',(tid,)); c.commit(); c.close()
 
+def saveimg(f,prefix):
+    if not f:return None
+    p=IMG/f'{prefix}_{uuid.uuid4().hex[:8]}.png'; Image.open(f).convert('RGB').save(p,'PNG'); return str(p)
 
-# ------------------------------------------------------------
-# Per-market config (persisted)
-# ------------------------------------------------------------
+def feature(source):
+    im=Image.open(source).convert('RGB') if isinstance(source,(str,Path)) else Image.open(source).convert('RGB')
+    w,h=im.size; im=im.crop((int(w*.04),int(h*.06),int(w*.98),int(h*.96))).convert('L')
+    im=ImageEnhance.Contrast(im).enhance(2).filter(ImageFilter.SHARPEN)
+    tw=th=96; s=max(tw/im.width,th/im.height); im=im.resize((int(im.width*s),int(im.height*s)),Image.Resampling.LANCZOS)
+    x=(im.width-tw)//2; y=(im.height-th)//2; a=np.asarray(im.crop((x,y,x+tw,y+th)),dtype=np.float32)/255
+    gx=np.diff(a,axis=1); gy=np.diff(a,axis=0); gx=np.pad(gx,((0,0),(0,1))); gy=np.pad(gy,((0,1),(0,0))); e=np.sqrt(gx*gx+gy*gy)
+    def sm(z,n=32): return np.asarray(Image.fromarray(np.uint8(np.clip(z,0,1)*255)).resize((n,n)),dtype=np.float32).ravel()/255
+    f=np.r_[sm(a),sm(e/(e.max()+1e-6)),a.mean(0),a.mean(1),e.mean(0),e.mean(1)].astype(np.float32); n=np.linalg.norm(f); return f/n if n else f
 
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-        except Exception:
-            cfg = {}
+def money(x):
+    try:return f'{float(x):,.2f}'
+    except:return '—'
+
+def num(x):
+    try:return f'{float(x):.2f}'
+    except:return '—'
+
+T=trades()
+st.sidebar.title('📈 TEMEXY JOURNAL'); st.sidebar.caption('Trade • Record • Review • Improve')
+page=st.sidebar.radio('Navigate',['🏠 Dashboard','➕ New Trade','📖 Trade History','🔎 Trade Detail','📊 Analytics','📚 Setup Library','⚙️ Settings'])
+st.sidebar.metric('Total Trades',len(T))
+if T:
+    wins=sum(x['result']=='Win' for x in T); net=sum(float(x['actual_r'] or 0) for x in T)
+    st.sidebar.metric('Win Rate',f'{wins/len(T)*100:.1f}%'); st.sidebar.metric('Net R',f'{net:+.2f}R')
+
+if page=='🏠 Dashboard':
+    st.title('🏠 Trading Dashboard'); st.caption('Your trading history, discipline and performance in one place.')
+    if not T: st.info('No trades yet. Go to ➕ New Trade.')
     else:
-        cfg = {}
-    for m in MARKETS:
-        cfg.setdefault(m, dict(DEFAULT_PARAMS))
-    return cfg
-
-
-def save_config(cfg):
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(cfg, f)
-
-
-# ------------------------------------------------------------
-# Auto-crop (find the chart plot area, ignore UI margins)
-# ------------------------------------------------------------
-
-def _bounds_from_profile(profile, frac=0.15):
-    if profile.max() <= 1e-6:
-        return 0, len(profile)
-    thresh = profile.max() * frac
-    idx = np.where(profile > thresh)[0]
-    if len(idx) == 0:
-        return 0, len(profile)
-    return int(idx[0]), int(idx[-1]) + 1
-
-
-def auto_crop(img):
-    gray = np.asarray(img.convert("L"), dtype=np.float32)
-    h, w = gray.shape
-    row_std, col_std = gray.std(axis=1), gray.std(axis=0)
-    top, bottom = _bounds_from_profile(row_std)
-    left, right = _bounds_from_profile(col_std)
-    pad_h, pad_w = int(0.02 * h), int(0.02 * w)
-    top, bottom = max(0, top - pad_h), min(h, bottom + pad_h)
-    left, right = max(0, left - pad_w), min(w, right + pad_w)
-    if (bottom - top) < 0.4 * h or (right - left) < 0.4 * w:
-        left, top, right, bottom = int(w * 0.05), int(h * 0.10), int(w * 0.98), int(h * 0.94)
-    return img.crop((left, top, right, bottom))
-
-
-# ------------------------------------------------------------
-# Candle extraction from pixels
-# ------------------------------------------------------------
-
-def group_columns(has_col, max_gap=1):
-    groups = []
-    n = len(has_col)
-    i = 0
-    while i < n:
-        if not has_col[i]:
-            i += 1
-            continue
-        start = end = i
-        gap = 0
-        j = i + 1
-        while j < n:
-            if has_col[j]:
-                end = j
-                gap = 0
-            else:
-                gap += 1
-                if gap > max_gap:
-                    break
-            j += 1
-        groups.append((start, end))
-        i = j
-    return groups
-
-
-def find_horizontal_line_rows(colored, window=15, ratio=3.0, min_frac=0.15):
-    """Chart reference/grid lines (dotted or solid, often pure black) span
-    almost the full width and get misread as candle pixels, corrupting
-    every wick that crosses them. Flag rows whose colored-pixel count
-    spikes far above their local neighborhood."""
-    H, W = colored.shape
-    row_counts = colored.sum(axis=1).astype(np.float32)
-    bad_rows = np.zeros(H, dtype=bool)
-    min_count = min_frac * W
-    for y in range(H):
-        lo, hi = max(0, y - window), min(H, y + window + 1)
-        neighborhood = np.concatenate([row_counts[lo:y], row_counts[y + 1:hi]])
-        if neighborhood.size == 0:
-            continue
-        local_med = np.median(neighborhood)
-        if row_counts[y] > min_count and row_counts[y] > ratio * max(local_med, 1.0):
-            bad_rows[y] = True
-    return bad_rows
-
-
-def extract_candles(color_img, min_col_pixels=2, body_coverage=0.55):
-    arr = np.asarray(color_img.convert("RGB"), dtype=np.float32)
-    H, W, _ = arr.shape
-    R, G, B = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-
-    is_bull = (G > R + 18) & (G > B + 18)
-    is_bear = (R < 90) & (G < 90) & (B < 90)
-    colored = is_bull | is_bear
-
-    bad_rows = find_horizontal_line_rows(colored)
-    is_bull[bad_rows, :] = False
-    is_bear[bad_rows, :] = False
-    colored[bad_rows, :] = False
-
-    col_counts = colored.sum(axis=0)
-    has_col = col_counts >= min_col_pixels
-    groups = group_columns(has_col, max_gap=1)
-
-    def to_price(y):
-        return 1.0 - (y / max(H - 1, 1))
-
-    candles = []
-    for (x0, x1) in groups:
-        region = colored[:, x0:x1 + 1]
-        rows = np.where(region.any(axis=1))[0]
-        if len(rows) == 0:
-            continue
-        wick_top, wick_bottom = int(rows.min()), int(rows.max())
-
-        coverage = region.mean(axis=1)
-        body_rows = np.where(coverage >= body_coverage)[0]
-        if len(body_rows) == 0:
-            body_top, body_bottom = wick_top, wick_bottom
-        else:
-            body_top, body_bottom = int(body_rows.min()), int(body_rows.max())
-
-        bull_count = is_bull[:, x0:x1 + 1].sum()
-        bear_count = is_bear[:, x0:x1 + 1].sum()
-        color = "bull" if bull_count >= bear_count else "bear"
-
-        high, low = to_price(wick_top), to_price(wick_bottom)
-        body_high, body_low = to_price(body_top), to_price(body_bottom)
-        close, open_ = (body_high, body_low) if color == "bull" else (body_low, body_high)
-
-        candles.append({
-            "x0": x0, "x1": x1,
-            "wick_top": wick_top, "wick_bottom": wick_bottom,
-            "body_top": body_top, "body_bottom": body_bottom,
-            "high": high, "low": low,
-            "body_high": body_high, "body_low": body_low,
-            "close": close, "open": open_,
-            "color": color,
-        })
-
-    return candles, H, W
-
-
-# ------------------------------------------------------------
-# Structure: swings, BOS, liquidity sweeps
-# ------------------------------------------------------------
-
-def find_swings(candles, lookback=3):
-    n = len(candles)
-    highs, lows = [], []
-    for i in range(n):
-        lo, hi = max(0, i - lookback), min(n, i + lookback + 1)
-        window = candles[lo:hi]
-        if candles[i]["high"] >= max(c["high"] for c in window):
-            highs.append(i)
-        if candles[i]["low"] <= min(c["low"] for c in window):
-            lows.append(i)
-    return highs, lows
-
-
-def find_events(candles, swing_high_idx, swing_low_idx):
-    """BOS = close breaks beyond a prior swing level. Sweep = wick pokes
-    beyond it but the candle closes back inside (liquidity grab)."""
-    events = []
-    broken_highs, broken_lows = set(), set()
-
-    for i, c in enumerate(candles):
-        for sh in swing_high_idx:
-            if sh >= i or sh in broken_highs:
-                continue
-            level = candles[sh]["high"]
-            if c["high"] > level:
-                broken_highs.add(sh)
-                if c["close"] > level:
-                    events.append({"type": "bos_bull", "idx": i, "level": level, "ref_idx": sh})
-                else:
-                    events.append({"type": "sweep_high", "idx": i, "level": level, "ref_idx": sh})
-        for sl in swing_low_idx:
-            if sl >= i or sl in broken_lows:
-                continue
-            level = candles[sl]["low"]
-            if c["low"] < level:
-                broken_lows.add(sl)
-                if c["close"] < level:
-                    events.append({"type": "bos_bear", "idx": i, "level": level, "ref_idx": sl})
-                else:
-                    events.append({"type": "sweep_low", "idx": i, "level": level, "ref_idx": sl})
-    return events
-
-
-# ------------------------------------------------------------
-# FVG (fair value gap): 3-candle imbalance
-# ------------------------------------------------------------
-
-def find_fvgs(candles, min_fvg_frac):
-    if not candles:
-        return []
-    total_range = max(c["high"] for c in candles) - min(c["low"] for c in candles)
-    total_range = max(total_range, 1e-6)
-    fvgs = []
-    for i in range(1, len(candles) - 1):
-        c1, c3 = candles[i - 1], candles[i + 1]
-        if c1["high"] < c3["low"]:
-            size = c3["low"] - c1["high"]
-            if size >= min_fvg_frac * total_range:
-                fvgs.append({"type": "bull", "idx1": i - 1, "idx3": i + 1, "top": c3["low"], "bottom": c1["high"]})
-        elif c1["low"] > c3["high"]:
-            size = c1["low"] - c3["high"]
-            if size >= min_fvg_frac * total_range:
-                fvgs.append({"type": "bear", "idx1": i - 1, "idx3": i + 1, "top": c1["low"], "bottom": c3["high"]})
-    return fvgs
-
-
-# ------------------------------------------------------------
-# OB (order block): last opposite-color candle before a leg
-# ------------------------------------------------------------
-
-def find_ob(candles, leg_origin_idx, direction):
-    opposite = "bear" if direction == "bull" else "bull"
-    for j in range(leg_origin_idx, -1, -1):
-        if candles[j]["color"] == opposite:
-            return j
-    return None
-
-
-# ------------------------------------------------------------
-# Full sequence: BOS/sweep -> FVG before it -> OB before that
-# ------------------------------------------------------------
-
-def detect_model_setups(candles, params):
-    if len(candles) < 6:
-        return []
-
-    swing_high_idx, swing_low_idx = find_swings(candles, lookback=params["swing_lookback"])
-    events = find_events(candles, swing_high_idx, swing_low_idx)
-    fvgs = find_fvgs(candles, params["min_fvg_frac"])
-    total_range = max(c["high"] for c in candles) - min(c["low"] for c in candles)
-    total_range = max(total_range, 1e-6)
-
-    setups = []
-    for ev in events:
-        direction = "bull" if ev["type"] in ("bos_bull", "sweep_high") else "bear"
-        event_idx = ev["idx"]
-
-        matching_fvgs = [f for f in fvgs if f["type"] == direction and f["idx3"] <= event_idx]
-        if not matching_fvgs:
-            continue
-        fvg = max(matching_fvgs, key=lambda f: f["idx3"])
-
-        ob_idx = find_ob(candles, fvg["idx1"], direction)
-        if ob_idx is None:
-            continue
-        ob = candles[ob_idx]
-
-        setups.append({
-            "direction": direction,
-            "is_sweep": ev["type"] in ("sweep_high", "sweep_low"),
-            "event_idx": event_idx,
-            "event_level": ev["level"],
-            "fvg": fvg,
-            "ob_idx": ob_idx,
-            "ob_size": abs(ob["body_high"] - ob["body_low"]) / total_range,
-            "fvg_size": (fvg["top"] - fvg["bottom"]) / total_range,
-            "leg_len": (event_idx - ob_idx) / max(len(candles), 1),
-            "displacement": abs(candles[event_idx]["close"] - ev["level"]) / total_range,
-        })
-
-    return setups
-
-
-def pick_primary_setup(setups):
-    """Pick the setup with the largest FVG (clearest imbalance) as the
-    representative one for this chart."""
-    if not setups:
-        return None
-    return max(setups, key=lambda s: s["fvg_size"])
-
-
-def struct_vector(setup):
-    return np.array([
-        setup["ob_size"], setup["fvg_size"], setup["leg_len"],
-        setup["displacement"], 1.0 if setup["is_sweep"] else 0.0,
-    ], dtype=np.float32)
-
-
-def struct_similarity(a, b):
-    """1 / (1 + distance) over the 4 continuous stats, direction and
-    sweep-vs-bos are hard-matched separately, not blended in here."""
-    dist = float(np.linalg.norm(np.asarray(a[:4]) - np.asarray(b[:4])))
-    return 1.0 / (1.0 + dist)
-
-
-# ------------------------------------------------------------
-# Overlay drawing so you can SEE what got detected
-# ------------------------------------------------------------
-
-def draw_annotated(color_img, candles, H, setup):
-    img = color_img.convert("RGB").copy()
-    draw = ImageDraw.Draw(img, "RGBA")
-
-    def y_of(price):
-        return int((1.0 - price) * (H - 1))
-
-    ob = candles[setup["ob_idx"]]
-    ob_end_x = candles[setup["fvg"]["idx1"]]["x1"]
-    draw.rectangle(
-        [ob["x0"] - 2, y_of(max(ob["body_high"], ob["body_low"])), ob_end_x + 2, y_of(min(ob["body_high"], ob["body_low"]))],
-        outline=(255, 140, 0, 255), fill=(255, 140, 0, 60), width=2,
-    )
-    draw.text((ob["x0"], y_of(max(ob["body_high"], ob["body_low"])) - 14), "OB", fill=(200, 90, 0, 255))
-
-    fvg = setup["fvg"]
-    fvg_end_x = candles[setup["event_idx"]]["x1"]
-    draw.rectangle(
-        [candles[fvg["idx1"]]["x0"] - 1, y_of(fvg["top"]), fvg_end_x + 2, y_of(fvg["bottom"])],
-        outline=(30, 120, 255, 255), fill=(30, 120, 255, 60), width=2,
-    )
-    draw.text((candles[fvg["idx1"]]["x0"], y_of(fvg["top"]) - 14), "FVG", fill=(20, 90, 200, 255))
-
-    event_x = candles[setup["event_idx"]]["x1"]
-    label = "SWEEP" if setup["is_sweep"] else "BOS"
-    draw.line([(event_x, 0), (event_x, H)], fill=(220, 0, 0, 200), width=1)
-    draw.text((event_x + 3, 4), label, fill=(200, 0, 0, 255))
-
-    return img
-
-
-# ------------------------------------------------------------
-# Lightweight visual descriptor (secondary tiebreaker only)
-# ------------------------------------------------------------
-
-def resize_and_center_crop(img, size):
-    target_w, target_h = size
-    w, h = img.size
-    scale = max(target_w / w, target_h / h)
-    nw, nh = max(target_w, int(w * scale)), max(target_h, int(h * scale))
-    resized = img.resize((nw, nh), Image.Resampling.LANCZOS)
-    left, top = max(0, (nw - target_w) // 2), max(0, (nh - target_h) // 2)
-    return resized.crop((left, top, left + target_w, top + target_h))
-
-
-def normalized_gray_array(img, size=STRUCT_SIZE):
-    gray = resize_and_center_crop(img, size).convert("L")
-    arr = np.asarray(gray, dtype=np.float32) / 255.0
-    arr = (arr - arr.mean()) / (arr.std() + 1e-6)
-    arr = np.clip(arr, -3.0, 3.0)
-    return (arr - arr.min()) / (arr.max() - arr.min() + 1e-6)
-
-
-def compute_hog(gray_arr, cell_size=CELL_SIZE, n_bins=N_BINS):
-    gy, gx = np.gradient(gray_arr.astype(np.float32))
-    magnitude = np.sqrt(gx * gx + gy * gy)
-    angle = np.degrees(np.arctan2(gy, gx)) % 180.0
-    h, w = gray_arr.shape
-    n_cells_y, n_cells_x = h // cell_size, w // cell_size
-    bin_width = 180.0 / n_bins
-    hist = np.zeros((n_cells_y, n_cells_x, n_bins), dtype=np.float32)
-    bin_idx = np.minimum((angle // bin_width).astype(int), n_bins - 1)
-    for cy in range(n_cells_y):
-        for cx in range(n_cells_x):
-            y0, y1 = cy * cell_size, (cy + 1) * cell_size
-            x0, x1 = cx * cell_size, (cx + 1) * cell_size
-            cb = bin_idx[y0:y1, x0:x1].ravel()
-            cm = magnitude[y0:y1, x0:x1].ravel()
-            hist[cy, cx, :] = np.bincount(cb, weights=cm, minlength=n_bins)[:n_bins]
-    vec = hist.ravel()
-    norm = np.linalg.norm(vec)
-    return vec / norm if norm > 1e-6 else vec
-
-
-def cosine(a, b):
-    a, b = np.asarray(a, dtype=np.float32), np.asarray(b, dtype=np.float32)
-    denom = (np.linalg.norm(a) * np.linalg.norm(b)) + 1e-6
-    return float(np.dot(a, b) / denom)
-
-
-# ------------------------------------------------------------
-# Database
-# ------------------------------------------------------------
-
-def load_db():
-    if not os.path.exists(DB_FILE):
-        return {}
-    try:
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def save_db(db):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(db, f)
-
-
-def new_id(db):
-    n = 1
-    while f"SETUP_{n:04d}" in db:
-        n += 1
-    return f"SETUP_{n:04d}"
-
-
-def file_hash(uploaded_file):
-    return hashlib.sha256(uploaded_file.getvalue()).hexdigest()
-
-
-def analyze_image(pil_img, params):
-    cropped = auto_crop(pil_img.convert("RGB"))
-    candles, H, W = extract_candles(cropped)
-    setups = detect_model_setups(candles, params)
-    primary = pick_primary_setup(setups)
-    gray_arr = normalized_gray_array(cropped)
-    visual = compute_hog(gray_arr).tolist()
-    return {
-        "cropped": cropped, "candles": candles, "H": H, "W": W,
-        "setups": setups, "primary": primary, "visual": visual,
-    }
-
-
-db = load_db()
-config = load_config()
-
-# ------------------------------------------------------------
-# Sidebar: per-market model parameters
-# ------------------------------------------------------------
-
-st.sidebar.header("⚙️ Model Parameters (per pair)")
-tune_market = st.sidebar.selectbox("Tune parameters for", MARKETS, key="tune_market")
-mp = config[tune_market]
-new_lookback = st.sidebar.slider("Swing lookback (candles)", 1, 6, mp["swing_lookback"], key="lb")
-new_fvg_frac = st.sidebar.slider("Min FVG size (% of visible range)", 1, 15, int(mp["min_fvg_frac"] * 100), key="fvgpct")
-if st.sidebar.button("💾 Save parameters for " + tune_market):
-    config[tune_market] = {"swing_lookback": new_lookback, "min_fvg_frac": new_fvg_frac / 100.0}
-    save_config(config)
-    st.sidebar.success(f"Saved parameters for {tune_market}")
-
-st.sidebar.markdown("---")
-st.sidebar.header("➕ Add Historical Setup")
-uploaded = st.sidebar.file_uploader("Upload setup screenshot", type=["png", "jpg", "jpeg"], key="library_upload")
-pair = st.sidebar.selectbox("Market", MARKETS, key="save_market")
-timeframe = st.sidebar.selectbox("Timeframe", ["1M", "5M", "15M", "30M", "1H", "4H", "Daily", "Other"])
-result = st.sidebar.selectbox("Backtest result", ["Win", "Loss", "Break-even", "Testing / Unknown"])
-session = st.sidebar.selectbox("Session", ["Asia / Tokyo", "London", "New York", "Overlap", "Unknown"])
-notes = st.sidebar.text_area("Optional notes")
-
-if uploaded is not None:
-    preview_img = Image.open(uploaded)
-    params = config[pair]
-    analysis = analyze_image(preview_img, params)
-
-    if analysis["primary"] is None:
-        st.sidebar.warning(
-            "No full OB → FVG → BOS/sweep sequence detected with current parameters. "
-            "You can still save it, but it won't count as a strict model match later. "
-            "Try loosening the FVG size or swing lookback for this pair."
-        )
+        d=pd.DataFrame(T); d['actual_r']=pd.to_numeric(d.actual_r,errors='coerce').fillna(0); d['pnl_money']=pd.to_numeric(d.pnl_money,errors='coerce').fillna(0)
+        wins=(d.result=='Win').sum(); total=len(d); pf=d.loc[d.actual_r>0,'actual_r'].sum()/abs(d.loc[d.actual_r<0,'actual_r'].sum()) if (d.actual_r<0).any() else np.inf
+        a,b,c,e,f=st.columns(5); a.metric('Trades',total); b.metric('Win Rate',f'{wins/total*100:.1f}%'); c.metric('Net R',f'{d.actual_r.sum():+.2f}R'); e.metric('Avg R',f'{d.actual_r.mean():+.2f}R'); f.metric('Profit Factor','∞' if np.isinf(pf) else f'{pf:.2f}')
+        l,r=st.columns(2)
+        with l:
+            st.subheader('📈 Equity Curve'); q=d.sort_values(['trade_date','trade_time','id'])['actual_r'].cumsum(); st.line_chart(pd.DataFrame({'Cumulative R':q.values},index=range(1,len(q)+1)))
+        with r:
+            st.subheader('🎯 Results'); st.bar_chart(d.result.value_counts())
+        a,b,c=st.columns(3); a.metric('Avg Rule Adherence',f'{pd.to_numeric(d.rule_adherence,errors="coerce").mean():.1f}/10'); b.metric('Avg Setup Quality',f'{pd.to_numeric(d.setup_quality,errors="coerce").mean():.1f}/10'); c.metric('Avg Confidence',f'{pd.to_numeric(d.confidence,errors="coerce").mean():.1f}/10')
+        st.subheader('Recent Trades'); st.dataframe(d.head(10)[['id','trade_date','market','direction','timeframe','setup_name','result','actual_r','pnl_money']],use_container_width=True,hide_index=True)
+
+elif page=='➕ New Trade':
+    st.title('➕ Record New Trade'); st.caption('Record what actually happened — not what you wish happened.')
+    with st.form('trade'):
+        st.subheader('1. Identification'); a,b,c=st.columns(3)
+        with a: td=st.date_input('Date',date.today()); market=st.selectbox('Market',['XAUUSD','USDCHF','BTCUSD','EURUSD','US100','Other'])
+        with b: tt=st.time_input('Time',time(9,0)); direction=st.selectbox('Direction',['Buy','Sell'])
+        with c: tf=st.selectbox('Timeframe',['1M','5M','15M','30M','1H','4H','Daily']); session=st.selectbox('Session',['Asia / Tokyo','London','New York','London/New York Overlap','Other'])
+        st.subheader('2. Setup & Context'); a,b=st.columns(2)
+        with a: setup=st.text_input('Setup Name',placeholder='Liquidity Sweep + MSS'); tags=st.text_input('Setup Tags',placeholder='FVG, CHOCH, sweep, OB'); bias=st.selectbox('HTF Bias',['Bullish','Bearish','Neutral','Not checked']); reason=st.text_area('Why did I take it?')
+        with b: context=st.text_area('Market Context / Structure'); news=st.text_input('News / Event',placeholder='CPI, NFP, FOMC, none'); execution=st.text_area('Execution notes',placeholder='Entry quality, spread, slippage, management...')
+        st.subheader('3. Numbers'); a,b,c,d=st.columns(4)
+        with a: entry=st.number_input('Entry',value=0.0,format='%.5f'); sl=st.number_input('Stop Loss',value=0.0,format='%.5f')
+        with b: tp=st.number_input('Take Profit',value=0.0,format='%.5f'); exitp=st.number_input('Exit Price',value=0.0,format='%.5f')
+        with c: prr=st.number_input('Planned RR',min_value=0.0,value=2.0,step=.1); riskpct=st.number_input('Risk %',min_value=0.0,value=1.0,step=.1)
+        with d: riskmoney=st.number_input('Risk Money',min_value=0.0,value=0.0,step=1.0); ar=st.number_input('Actual Result (R)',value=0.0,step=.1)
+        a,b,c=st.columns(3)
+        with a: pnl=st.number_input('P/L Money',value=0.0,step=1.0); result=st.selectbox('Result',['Win','Loss','Break-even','Partial / Mixed'])
+        with b: conf=st.slider('Confidence',1,10,5); quality=st.slider('Setup Quality',1,10,5)
+        with c: adherence=st.slider('Rule Adherence',1,10,5)
+        st.subheader('4. Psychology'); a,b,c=st.columns(3)
+        with a: eb=st.text_area('Before Trade'); ed=st.text_area('During Trade')
+        with b: ea=st.text_area('After Trade'); went=st.text_area('What went well?')
+        with c: mistake=st.text_area('Mistake'); lesson=st.text_area('Lesson')
+        change=st.text_area('What will I change next time?')
+        st.subheader('5. Screenshots'); a,b,c=st.columns(3)
+        with a: before=st.file_uploader('Before Entry',type=['png','jpg','jpeg'])
+        with b: setupimg=st.file_uploader('Setup / Entry',type=['png','jpg','jpeg'])
+        with c: after=st.file_uploader('After Exit',type=['png','jpg','jpeg'])
+        submit=st.form_submit_button('💾 SAVE TRADE',use_container_width=True)
+    if submit:
+        stamp=datetime.now().strftime('%Y%m%d_%H%M%S')
+        data={'trade_date':td.isoformat(),'trade_time':tt.strftime('%H:%M'),'market':market,'direction':direction,'timeframe':tf,'session':session,'setup_name':setup,'setup_tags':tags,'htf_bias':bias,'entry':entry,'stop_loss':sl,'take_profit':tp,'exit_price':exitp,'planned_rr':prr,'actual_r':ar,'pnl_money':pnl,'risk_percent':riskpct,'risk_money':riskmoney,'result':result,'confidence':conf,'rule_adherence':adherence,'setup_quality':quality,'news_event':news,'market_context':context,'reason':reason,'execution':execution,'emotion_before':eb,'emotion_during':ed,'emotion_after':ea,'mistake':mistake,'lesson':lesson,'what_went_well':went,'what_to_change':change,'screenshot_before':saveimg(before,stamp+'_before'),'screenshot_setup':saveimg(setupimg,stamp+'_setup'),'screenshot_after':saveimg(after,stamp+'_after'),'created_at':datetime.now().isoformat()}
+        i=add(data); st.success(f'Trade #{i} saved.'); st.balloons()
+
+elif page=='📖 Trade History':
+    st.title('📖 Complete Trade History')
+    if not T: st.info('No trades recorded yet.')
     else:
-        annotated = draw_annotated(analysis["cropped"], analysis["candles"], analysis["H"], analysis["primary"])
-        st.sidebar.image(annotated, caption="Detected OB / FVG / event — check this before saving", use_container_width=True)
+        d=pd.DataFrame(T); a,b,c,e=st.columns(4)
+        mf=a.multiselect('Market',sorted(d.market.unique()),default=[]); rf=b.multiselect('Result',sorted(d.result.unique()),default=[]); dfilt=c.multiselect('Direction',sorted(d.direction.unique()),default=[]); q=e.text_input('Search setup / tags')
+        x=d.copy()
+        if mf:x=x[x.market.isin(mf)]
+        if rf:x=x[x.result.isin(rf)]
+        if dfilt:x=x[x.direction.isin(dfilt)]
+        if q:x=x[x.setup_name.fillna('').str.contains(q,case=False)|x.setup_tags.fillna('').str.contains(q,case=False)]
+        st.write(f'Showing **{len(x)}** of **{len(d)}** trades.'); st.dataframe(x[['id','trade_date','trade_time','market','direction','timeframe','session','setup_name','result','actual_r','pnl_money','rule_adherence']],use_container_width=True,hide_index=True)
 
-    if st.sidebar.button("💾 Save Setup"):
-        content_hash = file_hash(uploaded)
-        duplicate = next((sid for sid, item in db.items() if item.get("file_hash") == content_hash), None)
-        if duplicate:
-            st.sidebar.warning(f"Already saved as {duplicate}.")
-        else:
-            setup_id = new_id(db)
-            img_path = os.path.join(STORAGE_DIR, f"{setup_id}.png")
-            analysis["cropped"].convert("RGB").save(img_path, "PNG")
+elif page=='🔎 Trade Detail':
+    st.title('🔎 Trade Detail')
+    if not T: st.info('No trades yet.')
+    else:
+        opts={f"#{t['id']} · {t['trade_date']} · {t['market']} · {t['direction']} · {t['result']}":t['id'] for t in T}; label=st.selectbox('Select trade',list(opts)); t=get(opts[label])
+        a,b,c,d,e=st.columns(5); a.metric('Result',t['result']); b.metric('R',num(t['actual_r'])); c.metric('P/L',money(t['pnl_money'])); d.metric('Planned RR',num(t['planned_rr'])); e.metric('Rules',f"{t['rule_adherence']}/10")
+        l,r=st.columns(2)
+        with l:
+            st.subheader('📌 Trade Information'); st.write(f"**Date:** {t['trade_date']} {t['trade_time']}"); st.write(f"**Market:** {t['market']}"); st.write(f"**Direction:** {t['direction']}"); st.write(f"**Timeframe:** {t['timeframe']}"); st.write(f"**Session:** {t['session']}"); st.write(f"**Setup:** {t['setup_name']}"); st.write(f"**Tags:** {t['setup_tags']}"); st.write(f"**HTF Bias:** {t['htf_bias']}"); st.write(f"**News:** {t['news_event']}")
+        with r:
+            st.subheader('💰 Numbers'); st.write(f"**Entry:** {num(t['entry'])}"); st.write(f"**SL:** {num(t['stop_loss'])}"); st.write(f"**TP:** {num(t['take_profit'])}"); st.write(f"**Exit:** {num(t['exit_price'])}"); st.write(f"**Risk:** {num(t['risk_percent'])}% / {money(t['risk_money'])}"); st.write(f"**Confidence:** {t['confidence']}/10"); st.write(f"**Setup Quality:** {t['setup_quality']}/10")
+        st.subheader('🖼️ Chart Record'); cols=st.columns(3)
+        for col,title,k in zip(cols,['Before Entry','Setup / Entry','After Exit'],['screenshot_before','screenshot_setup','screenshot_after']):
+            with col:
+                st.markdown(f'**{title}**'); p=t[k]
+                if p and os.path.exists(p):st.image(p,use_container_width=True)
+                else:st.caption('No image.')
+        for title,k in [('🧠 Why I Took It','reason'),('🌍 Market Context','market_context'),('⚙️ Execution','execution'),('😐 Before','emotion_before'),('😰 During','emotion_during'),('😌 After','emotion_after'),('✅ What Went Well','what_went_well'),('❌ Mistake','mistake'),('💡 Lesson','lesson'),('🔁 What I Will Change','what_to_change')]:
+            if t[k]: st.subheader(title); st.write(t[k])
+        if st.button('🗑️ Delete This Trade'): remove(t['id']); st.success('Deleted.'); st.rerun()
 
-            annotated_path = None
-            if analysis["primary"] is not None:
-                annotated_path = os.path.join(STORAGE_DIR, f"{setup_id}_annotated.png")
-                draw_annotated(analysis["cropped"], analysis["candles"], analysis["H"], analysis["primary"]).save(annotated_path, "PNG")
+elif page=='📊 Analytics':
+    st.title('📊 Trading Analytics'); st.caption('Let the journal show you where your performance comes from.')
+    if not T: st.info('Record trades first.')
+    else:
+        d=pd.DataFrame(T); d['actual_r']=pd.to_numeric(d.actual_r,errors='coerce').fillna(0); d['rule_adherence']=pd.to_numeric(d.rule_adherence,errors='coerce'); d['setup_quality']=pd.to_numeric(d.setup_quality,errors='coerce'); d['confidence']=pd.to_numeric(d.confidence,errors='coerce')
+        for title,col in [('By Market','market'),('By Setup','setup_name'),('By Session','session'),('By Direction','direction')]:
+            st.subheader(title); g=d.groupby(col).agg(Trades=('id','count'),Net_R=('actual_r','sum'),Avg_R=('actual_r','mean'),Wins=('result',lambda x:(x=='Win').sum()),Losses=('result',lambda x:(x=='Loss').sum())).reset_index(); g['Win_Rate_%']=g.Wins/g.Trades*100; st.dataframe(g,use_container_width=True,hide_index=True)
+        st.subheader('Discipline vs Result'); st.dataframe(d.groupby('result')[['rule_adherence','setup_quality','confidence']].mean(),use_container_width=True)
+        st.subheader('Monthly R'); d['month']=pd.to_datetime(d.trade_date).dt.to_period('M').astype(str); st.bar_chart(d.groupby('month').actual_r.sum())
 
-            db[setup_id] = {
-                "market": pair, "timeframe": timeframe, "result": result,
-                "session": session, "notes": notes, "image": img_path,
-                "annotated_image": annotated_path, "file_hash": content_hash,
-                "visual": analysis["visual"],
-                "struct": struct_vector(analysis["primary"]).tolist() if analysis["primary"] else None,
-                "direction": analysis["primary"]["direction"] if analysis["primary"] else None,
-                "is_sweep": analysis["primary"]["is_sweep"] if analysis["primary"] else None,
-                "valid_model": analysis["primary"] is not None,
-            }
-            save_db(db)
-            st.sidebar.success(f"Saved as {setup_id}" + ("" if analysis["primary"] else " (no valid model detected)"))
-
-st.sidebar.markdown("---")
-st.sidebar.metric("Saved setups", len(db))
-valid_count = sum(1 for v in db.values() if v.get("valid_model"))
-st.sidebar.caption(f"{valid_count} of {len(db)} have a confirmed OB→FVG→BOS/sweep sequence.")
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("🗑️ Manage Library")
-if db:
-    del_id = st.sidebar.selectbox("Select setup to delete", list(db.keys()), key="del_select")
-    if st.sidebar.button("Delete selected setup"):
-        for key in ("image", "annotated_image"):
-            p = db[del_id].get(key)
+elif page=='📚 Setup Library':
+    st.title('📚 Visual Setup Library'); st.caption('Upload a new chart and retrieve the closest historical chart formations. Market and direction do not control the match.')
+    q=st.file_uploader('New chart to compare',type=['png','jpg','jpeg'])
+    if q and T:
+        qv=feature(q); res=[]
+        for t in T:
+            p=t.get('screenshot_setup') or t.get('screenshot_before')
             if p and os.path.exists(p):
-                os.remove(p)
-        del db[del_id]
-        save_db(db)
-        st.sidebar.success(f"Deleted {del_id}")
-        st.rerun()
+                try: res.append((float(np.dot(qv,feature(p))),t,p))
+                except: pass
+        res.sort(reverse=True,key=lambda z:z[0]); st.success(f'Found {len(res)} saved chart records.'); top=res[:9]
+        for i in range(0,len(top),3):
+            row=top[i:i+3]; cols=st.columns(len(row))
+            for col,(score,t,p) in zip(cols,row):
+                with col:
+                    st.image(p,use_container_width=True); st.markdown(f"**#{t['id']} — {score*100:.1f}% visual similarity**"); st.write(f"{t['market']} · {t['timeframe']} · {t['direction']} · {t['result']}"); st.caption(t['setup_name'] or 'Unnamed setup')
+    elif not T: st.info('Record trades with screenshots first.')
+    st.markdown('---'); st.subheader('Saved Setup Screenshots')
+    for t in T:
+        p=t.get('screenshot_setup') or t.get('screenshot_before')
+        if p and os.path.exists(p):
+            with st.expander(f"#{t['id']} · {t['market']} · {t['setup_name']} · {t['result']}"): st.image(p,width=700); st.write(f"{t['direction']} · {t['timeframe']} · {t['session']} · {t['actual_r']}R")
 
-tab1, tab2 = st.tabs(["🔎 Setup Library", "📒 Trade Journal"])
+else:
+    st.title('⚙️ Journal Settings')
+    st.info('This journal records the complete trade lifecycle: setup, market context, numbers, execution, psychology, mistakes, lessons, and chart evidence.')
+    st.subheader('Included');
+    for x in ['Trade date/time','Market, direction, timeframe and session','Setup name and tags','HTF bias','Entry, SL, TP and exit','Planned RR, actual R, risk % and money','Win/Loss/BE','Confidence, setup quality and rule adherence','News and market context','Reason for entry and execution notes','Before/during/after emotions','Mistakes, lessons and next change','Before/setup/after screenshots','Visual setup similarity search','Market/setup/session/direction analytics','Equity curve and monthly performance']:
+        st.write('✅ '+x)
+    st.warning('Important for Streamlit Cloud: this version stores the SQLite database and screenshots in the app filesystem. For a permanent cloud journal, connect persistent storage/database before building a large archive.')
+    st.code(str(BASE))
 
-with tab1:
-    # ------------------------------------------------------------
-    # Main: query a new chart
-    # ------------------------------------------------------------
-
-    st.header("🔎 Check a New Chart Against the Model")
-
-    query_market = st.selectbox("Market of the chart you're checking", MARKETS, key="query_market")
-    query_file = st.file_uploader("Upload the chart to analyze", type=["png", "jpg", "jpeg"], key="query_upload")
-
-    strict_mode = st.checkbox("Strict mode: only show library matches that also have a confirmed model sequence", value=True)
-    same_timeframe_only = st.checkbox("Only compare within same timeframe", value=False)
-    top_n = st.slider("Max matches to show", 3, 12, 6)
-
-    if query_file:
-        query_img = Image.open(query_file)
-        params = config[query_market]
-        analysis = analyze_image(query_img, params)
-
-        st.subheader("Detected on your chart")
-        if analysis["primary"] is None:
-            st.error(
-                "No OB → FVG → BOS/liquidity-sweep sequence detected on this chart with the "
-                f"current {query_market} parameters. Either the model genuinely isn't present here, "
-                "or the parameters need adjusting in the sidebar for this pair."
-            )
-            st.image(analysis["cropped"], use_container_width=True)
-        else:
-            p = analysis["primary"]
-            annotated = draw_annotated(analysis["cropped"], analysis["candles"], analysis["H"], p)
-            st.image(annotated, use_container_width=True)
-            st.success(
-                f"Detected a **{p['direction'].upper()}** setup "
-                f"({'liquidity sweep' if p['is_sweep'] else 'break of structure'}) — "
-                f"OB size {p['ob_size']*100:.1f}% · FVG size {p['fvg_size']*100:.1f}% of visible range."
-            )
-            st.caption("This OB zone (orange) is your suggested entry on THIS chart — it's independent of any saved example's entry point.")
-
-            if not db:
-                st.warning("Library is empty — nothing to compare against yet.")
-            else:
-                candidates = [(sid, item) for sid, item in db.items() if item.get("market") == query_market]
-                if same_timeframe_only:
-                    candidates = [(sid, item) for sid, item in candidates if item.get("timeframe") == analysis.get("timeframe")]
-                if strict_mode:
-                    candidates = [(sid, item) for sid, item in candidates if item.get("valid_model")]
-
-                q_struct = struct_vector(p)
-                scored = []
-                for sid, item in candidates:
-                    if item.get("valid_model") and item.get("struct") is not None:
-                        if item.get("direction") != p["direction"] or bool(item.get("is_sweep")) != p["is_sweep"]:
-                            continue
-                        s_score = struct_similarity(q_struct, np.array(item["struct"]))
-                        v_score = cosine(analysis["visual"], item["visual"])
-                        total = 0.85 * s_score + 0.15 * max(0.0, v_score)
-                    else:
-                        total = 0.15 * max(0.0, cosine(analysis["visual"], item["visual"]))
-                    scored.append({"id": sid, "score": total, "item": item})
-
-                scored.sort(key=lambda x: x["score"], reverse=True)
-                scored = scored[:top_n]
-
-                st.markdown("---")
-                st.subheader(f"📁 Closest matches in your {query_market} library")
-                if not scored:
-                    st.info("No comparable setups found under the current filters.")
-                for start in range(0, len(scored), 3):
-                    row = scored[start:start + 3]
-                    cols = st.columns(len(row))
-                    for col, m in zip(cols, row):
-                        with col:
-                            item = m["item"]
-                            st.markdown(f"**{m['id']}** — {m['score']*100:.0f}% match")
-                            show_path = item.get("annotated_image") or item.get("image")
-                            if show_path and os.path.exists(show_path):
-                                st.image(show_path, use_container_width=True)
-                            tag = "✅ Confirmed model" if item.get("valid_model") else "⚠️ No confirmed sequence"
-                            st.caption(tag)
-                            st.write(f"**Timeframe:** {item.get('timeframe')} · **Result:** {item.get('result')}")
-                            st.write(f"**Session:** {item.get('session')}")
-                            if item.get("notes"):
-                                st.caption(item["notes"])
-
-    # ------------------------------------------------------------
-    # Library browser
-    # ------------------------------------------------------------
-
-    st.markdown("---")
-    st.header("🗂️ Your Setup Library")
-
-    if db:
-        browser_cols = st.columns(4)
-        for idx, (sid, item) in enumerate(db.items()):
-            with browser_cols[idx % 4]:
-                show_path = item.get("annotated_image") or item.get("image")
-                if show_path and os.path.exists(show_path):
-                    st.image(show_path, use_container_width=True)
-                st.markdown(f"**{sid}**")
-                tag = "✅" if item.get("valid_model") else "⚠️"
-                st.caption(f"{tag} {item.get('market')} · {item.get('timeframe')} · {item.get('result')}")
-    else:
-        st.write("No setups saved yet.")
-
-
-JOURNAL_FILE = os.path.join(STORAGE_DIR, "journal.json")
-
-
-def load_journal():
-    if not os.path.exists(JOURNAL_FILE):
-        return []
-    try:
-        with open(JOURNAL_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return []
-
-
-def save_journal(entries):
-    with open(JOURNAL_FILE, "w", encoding="utf-8") as f:
-        json.dump(entries, f)
-
-
-def new_journal_id(entries):
-    n = 1
-    existing = {e["id"] for e in entries}
-    while f"JRNL_{n:04d}" in existing:
-        n += 1
-    return f"JRNL_{n:04d}"
-
-
-def compute_r(entry, sl, tp, result):
-    if result == "Break-even":
-        return 0.0
-    try:
-        entry_f, sl_f, tp_f = float(entry), float(sl), float(tp)
-        risk = abs(entry_f - sl_f)
-        reward = abs(tp_f - entry_f)
-        rr = reward / risk if risk > 0 else None
-    except (ValueError, TypeError):
-        rr = None
-    if result == "Win":
-        return rr if rr is not None else 1.0
-    if result == "Loss":
-        return -1.0
-    return 0.0
-
-
-with tab2:
-    st.header("📒 Trade Journal")
-    st.caption("Every trade you've actually taken — separate from the setup library above, which is for backtesting patterns.")
-
-    journal = load_journal()
-
-    with st.form("journal_form", clear_on_submit=True):
-        c1, c2, c3 = st.columns(3)
-        j_date = c1.date_input("Date")
-        j_pair = c2.selectbox("Pair", MARKETS, key="j_pair")
-        j_dir = c3.selectbox("Direction", ["Buy", "Sell"], key="j_dir")
-
-        c4, c5, c6 = st.columns(3)
-        j_setup = c4.selectbox("Setup", ["OB+FVG+BOS", "OB+FVG+Sweep", "Other"], key="j_setup")
-        j_session = c5.selectbox("Session", ["Asia", "London", "New York", "Overlap"], key="j_session")
-        j_result = c6.selectbox("Result", ["Win", "Loss", "Break-even"], key="j_result")
-
-        c7, c8, c9 = st.columns(3)
-        j_entry = c7.text_input("Entry price", key="j_entry")
-        j_sl = c8.text_input("Stop loss", key="j_sl")
-        j_tp = c9.text_input("Take profit", key="j_tp")
-
-        j_notes = st.text_area("Notes — what you saw, how you felt, what to repeat or fix", key="j_notes")
-        j_screenshot = st.file_uploader("Optional screenshot", type=["png", "jpg", "jpeg"], key="j_screenshot")
-
-        if st.form_submit_button("💾 Save trade"):
-            entry_id = new_journal_id(journal)
-            image_path = None
-            if j_screenshot is not None:
-                image_path = os.path.join(STORAGE_DIR, f"{entry_id}.png")
-                Image.open(j_screenshot).convert("RGB").save(image_path, "PNG")
-
-            journal.append({
-                "id": entry_id,
-                "date": str(j_date),
-                "pair": j_pair,
-                "dir": j_dir,
-                "setup": j_setup,
-                "session": j_session,
-                "result": j_result,
-                "entry": j_entry,
-                "sl": j_sl,
-                "tp": j_tp,
-                "r": compute_r(j_entry, j_sl, j_tp, j_result),
-                "notes": j_notes,
-                "image": image_path,
-            })
-            save_journal(journal)
-            st.success(f"Saved {entry_id}")
-            st.rerun()
-
-    st.markdown("---")
-    j_filter = st.selectbox("Filter by pair", ["All"] + MARKETS, key="j_filter")
-    filtered = [e for e in journal if j_filter == "All" or e["pair"] == j_filter]
-    chrono = sorted(filtered, key=lambda e: e["date"])  # oldest first, for stats/curve
-    newest_first = list(reversed(chrono))
-
-    wins = sum(1 for e in chrono if e["result"] == "Win")
-    losses = sum(1 for e in chrono if e["result"] == "Loss")
-    decided = wins + losses
-    win_rate = round(100 * wins / decided) if decided else 0
-    total_r = sum(e["r"] for e in chrono)
-    avg_r = total_r / len(chrono) if chrono else 0.0
-
-    s1, s2, s3, s4 = st.columns(4)
-    s1.metric("Trades logged", len(chrono))
-    s2.metric("Win rate", f"{win_rate}%")
-    s3.metric("Total R", f"{total_r:+.1f}R")
-    s4.metric("Avg R / trade", f"{avg_r:+.2f}R")
-
-    st.subheader("Equity curve (cumulative R)")
-    if len(chrono) >= 2:
-        cum, curve = 0.0, [0.0]
-        for e in chrono:
-            cum += e["r"]
-            curve.append(cum)
-        st.line_chart(curve)
-    else:
-        st.caption("Log a couple more trades to see the curve.")
-
-    st.subheader("Ledger")
-    if not newest_first:
-        st.caption("No trades logged yet.")
-    for e in newest_first:
-        cols = st.columns([1, 3, 1]) if e.get("image") else st.columns([4, 1])
-        if e.get("image") and os.path.exists(e["image"]):
-            with cols[0]:
-                st.image(e["image"], use_container_width=True)
-            text_col, del_col = cols[1], cols[2]
-        else:
-            text_col, del_col = cols[0], cols[1]
-
-        with text_col:
-            r_val = e["r"]
-            r_str = f"{r_val:+.2f}R"
-            st.markdown(f"**{e['date']} · {e['pair']} · {e['dir']} · {e['setup']}** — {e['result']} ({r_str})")
-            st.caption(f"Session: {e['session']} · Entry {e.get('entry','—')} · SL {e.get('sl','—')} · TP {e.get('tp','—')}")
-            if e.get("notes"):
-                st.write(e["notes"])
-        with del_col:
-            if st.button("Delete", key=f"deljrnl_{e['id']}"):
-                if e.get("image") and os.path.exists(e["image"]):
-                    os.remove(e["image"])
-                journal = [x for x in journal if x["id"] != e["id"]]
-                save_journal(journal)
-                st.rerun()
-        st.markdown("---")
-
-st.markdown("---")
-st.caption(
-    "TEMEXY LIBRARY v3 — OB → FVG → BOS/sweep detection reconstructed from screenshot "
-    "pixels. This is a heuristic reader of your charts, not a price-data feed — always "
-    "confirm the drawn zones match what you see before acting on them."
-)
+st.markdown('---'); st.caption('TEMEXY TRADE JOURNAL • Evidence over emotion • Process over outcome')
