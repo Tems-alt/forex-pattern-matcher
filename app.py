@@ -229,7 +229,7 @@ def conn():
 
 def init():
     c=conn(); c.execute('''CREATE TABLE IF NOT EXISTS trades(
-    id INTEGER PRIMARY KEY AUTOINCREMENT, trade_date TEXT, trade_time TEXT, market TEXT,
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, trade_date TEXT, trade_time TEXT, market TEXT,
     direction TEXT, timeframe TEXT, session TEXT, setup_name TEXT, setup_tags TEXT,
     htf_bias TEXT, entry REAL, stop_loss REAL, take_profit REAL, exit_price REAL,
     planned_rr REAL, actual_r REAL, pnl_money REAL, risk_percent REAL, risk_money REAL,
@@ -237,31 +237,36 @@ def init():
     news_event TEXT, market_context TEXT, reason TEXT, execution TEXT,
     emotion_before TEXT, emotion_during TEXT, emotion_after TEXT, mistake TEXT,
     lesson TEXT, what_went_well TEXT, what_to_change TEXT, screenshot_before TEXT,
-    screenshot_setup TEXT, screenshot_after TEXT, created_at TEXT)'''); c.commit(); c.close()
+    screenshot_setup TEXT, screenshot_after TEXT, created_at TEXT)''')
+    # Migration for DBs created before multi-user support existed.
+    try: c.execute('ALTER TABLE trades ADD COLUMN user_id TEXT')
+    except sqlite3.OperationalError: pass
+    c.commit(); c.close()
 init()
 
-def trades():
-    c=conn(); x=[dict(r) for r in c.execute('SELECT * FROM trades ORDER BY trade_date DESC,trade_time DESC,id DESC')]; c.close(); return x
+def trades(user_id):
+    c=conn(); x=[dict(r) for r in c.execute('SELECT * FROM trades WHERE user_id=? ORDER BY trade_date DESC,trade_time DESC,id DESC',(user_id,))]; c.close(); return x
 
-def get(tid):
-    c=conn(); r=c.execute('SELECT * FROM trades WHERE id=?',(tid,)).fetchone(); c.close(); return dict(r) if r else None
+def get(tid,user_id):
+    c=conn(); r=c.execute('SELECT * FROM trades WHERE id=? AND user_id=?',(tid,user_id)).fetchone(); c.close(); return dict(r) if r else None
 
 def add(d):
     c=conn(); cols=list(d); c.execute(f"INSERT INTO trades({','.join(cols)}) VALUES({','.join(['?']*len(cols))})",[d[x] for x in cols]); c.commit(); i=c.execute('SELECT last_insert_rowid()').fetchone()[0]; c.close(); return i
 
-def remove(tid):
-    t=get(tid)
-    if t:
-        for k in ('screenshot_before','screenshot_setup','screenshot_after'):
-            p=t.get(k)
-            if p:
-                try: Path(p).unlink(missing_ok=True)
-                except: pass
-    c=conn(); c.execute('DELETE FROM trades WHERE id=?',(tid,)); c.commit(); c.close()
+def remove(tid,user_id):
+    t=get(tid,user_id)
+    if not t: return
+    for k in ('screenshot_before','screenshot_setup','screenshot_after'):
+        p=t.get(k)
+        if p:
+            try: Path(p).unlink(missing_ok=True)
+            except: pass
+    c=conn(); c.execute('DELETE FROM trades WHERE id=? AND user_id=?',(tid,user_id)); c.commit(); c.close()
 
-def saveimg(f,prefix):
+def saveimg(f,prefix,user_id):
     if not f:return None
-    p=IMG/f'{prefix}_{uuid.uuid4().hex[:8]}.png'; Image.open(f).convert('RGB').save(p,'PNG'); return str(p)
+    udir=IMG/user_id; udir.mkdir(parents=True,exist_ok=True)
+    p=udir/f'{prefix}_{uuid.uuid4().hex[:8]}.png'; Image.open(f).convert('RGB').save(p,'PNG'); return str(p)
 
 def feature(source):
     im=Image.open(source).convert('RGB') if isinstance(source,(str,Path)) else Image.open(source).convert('RGB')
@@ -281,8 +286,6 @@ def num(x):
     try:return f'{float(x):.2f}'
     except:return '—'
 
-T=trades()
-
 def hero(kicker, title, sub):
     st.markdown(
         f'<div class="temexy-hero"><div class="hero-kicker">{kicker}</div>'
@@ -292,6 +295,38 @@ def hero(kicker, title, sub):
 
 def section(title):
     st.markdown(f'<div class="section-title"><span class="section-dot"></span>{title}</div>', unsafe_allow_html=True)
+
+# ------------------------------------------------------------
+# GOOGLE SIGN-IN — gates the whole app. Nothing below this runs
+# for a signed-out visitor, and every query below is scoped to
+# the signed-in user's own id (st.user.sub), so one person can
+# never see another person's trades.
+# ------------------------------------------------------------
+if not st.user.is_logged_in:
+    st.markdown(
+        '<div class="temexy-hero" style="max-width:520px;margin:8vh auto 0;text-align:center">'
+        '<div class="hero-kicker">TEMEXY • TRADE JOURNAL</div>'
+        '<div class="hero-title" style="font-size:26px">Sign in to see your journal</div>'
+        '<div class="hero-sub">Every account gets its own private trades, screenshots and AI assistant. '
+        'Nobody else can see your data, and you can\'t see theirs.</div></div>',
+        unsafe_allow_html=True,
+    )
+    _, mid, _ = st.columns([1,1,1])
+    with mid:
+        if st.button('Continue with Google', use_container_width=True, type='primary'):
+            st.login('google')
+    st.stop()
+
+USER_ID = st.user.sub
+USER_NAME = st.user.get('name') or st.user.get('email') or 'Trader'
+T=trades(USER_ID)
+
+top_l, top_r = st.columns([6,1])
+with top_l:
+    st.caption(f'Signed in as **{USER_NAME}**')
+with top_r:
+    if st.button('Log out', use_container_width=True):
+        st.logout()
 
 # ------------------------------------------------------------
 # ------------------------------------------------------------
@@ -393,7 +428,7 @@ elif current_key=='new-trade':
         submit=st.form_submit_button('💾 SAVE TRADE',use_container_width=True)
     if submit:
         stamp=datetime.now().strftime('%Y%m%d_%H%M%S')
-        data={'trade_date':td.isoformat(),'trade_time':tt.strftime('%H:%M'),'market':market,'direction':direction,'timeframe':tf,'session':session,'setup_name':setup,'setup_tags':tags,'htf_bias':bias,'entry':entry,'stop_loss':sl,'take_profit':tp,'exit_price':exitp,'planned_rr':prr,'actual_r':ar,'pnl_money':pnl,'risk_percent':riskpct,'risk_money':riskmoney,'result':result,'confidence':conf,'rule_adherence':adherence,'setup_quality':quality,'news_event':news,'market_context':context,'reason':reason,'execution':execution,'emotion_before':eb,'emotion_during':ed,'emotion_after':ea,'mistake':mistake,'lesson':lesson,'what_went_well':went,'what_to_change':change,'screenshot_before':saveimg(before,stamp+'_before'),'screenshot_setup':saveimg(setupimg,stamp+'_setup'),'screenshot_after':saveimg(after,stamp+'_after'),'created_at':datetime.now().isoformat()}
+        data={'user_id':USER_ID,'trade_date':td.isoformat(),'trade_time':tt.strftime('%H:%M'),'market':market,'direction':direction,'timeframe':tf,'session':session,'setup_name':setup,'setup_tags':tags,'htf_bias':bias,'entry':entry,'stop_loss':sl,'take_profit':tp,'exit_price':exitp,'planned_rr':prr,'actual_r':ar,'pnl_money':pnl,'risk_percent':riskpct,'risk_money':riskmoney,'result':result,'confidence':conf,'rule_adherence':adherence,'setup_quality':quality,'news_event':news,'market_context':context,'reason':reason,'execution':execution,'emotion_before':eb,'emotion_during':ed,'emotion_after':ea,'mistake':mistake,'lesson':lesson,'what_went_well':went,'what_to_change':change,'screenshot_before':saveimg(before,stamp+'_before',USER_ID),'screenshot_setup':saveimg(setupimg,stamp+'_setup',USER_ID),'screenshot_after':saveimg(after,stamp+'_after',USER_ID),'created_at':datetime.now().isoformat()}
         i=add(data); st.success(f'Trade #{i} saved.'); st.balloons()
 
 elif current_key=='history':
@@ -413,7 +448,7 @@ elif current_key=='detail':
     hero('ONE TRADE, IN FULL', 'Trade detail', 'Everything you recorded about a single trade — numbers, context, psychology and chart evidence.')
     if not T: st.info('No trades yet.')
     else:
-        opts={f"#{t['id']} · {t['trade_date']} · {t['market']} · {t['direction']} · {t['result']}":t['id'] for t in T}; label=st.selectbox('Select trade',list(opts)); t=get(opts[label])
+        opts={f"#{t['id']} · {t['trade_date']} · {t['market']} · {t['direction']} · {t['result']}":t['id'] for t in T}; label=st.selectbox('Select trade',list(opts)); t=get(opts[label],USER_ID)
         a,b,c,d,e=st.columns(5); a.metric('Result',t['result']); b.metric('R',num(t['actual_r'])); c.metric('P/L',money(t['pnl_money'])); d.metric('Planned RR',num(t['planned_rr'])); e.metric('Rules',f"{t['rule_adherence']}/10")
         l,r=st.columns(2)
         with l:
@@ -428,7 +463,7 @@ elif current_key=='detail':
                 else:st.caption('No image.')
         for title,k in [('🧠 Why I Took It','reason'),('🌍 Market Context','market_context'),('⚙️ Execution','execution'),('😐 Before','emotion_before'),('😰 During','emotion_during'),('😌 After','emotion_after'),('✅ What Went Well','what_went_well'),('❌ Mistake','mistake'),('💡 Lesson','lesson'),('🔁 What I Will Change','what_to_change')]:
             if t[k]: section(title); st.write(t[k])
-        if st.button('🗑️ Delete This Trade'): remove(t['id']); st.success('Deleted.'); st.rerun()
+        if st.button('🗑️ Delete This Trade'): remove(t['id'],USER_ID); st.success('Deleted.'); st.rerun()
 
 elif current_key=='analytics':
     hero('WHERE YOUR EDGE ACTUALLY LIVES', 'Trading analytics', 'Let the journal show you where your performance really comes from — by market, setup, session and direction.')
