@@ -142,6 +142,26 @@ def group_columns(has_col, max_gap=1):
     return groups
 
 
+def find_horizontal_line_rows(colored, window=15, ratio=3.0, min_frac=0.15):
+    """Chart reference/grid lines (dotted or solid, often pure black) span
+    almost the full width and get misread as candle pixels, corrupting
+    every wick that crosses them. Flag rows whose colored-pixel count
+    spikes far above their local neighborhood."""
+    H, W = colored.shape
+    row_counts = colored.sum(axis=1).astype(np.float32)
+    bad_rows = np.zeros(H, dtype=bool)
+    min_count = min_frac * W
+    for y in range(H):
+        lo, hi = max(0, y - window), min(H, y + window + 1)
+        neighborhood = np.concatenate([row_counts[lo:y], row_counts[y + 1:hi]])
+        if neighborhood.size == 0:
+            continue
+        local_med = np.median(neighborhood)
+        if row_counts[y] > min_count and row_counts[y] > ratio * max(local_med, 1.0):
+            bad_rows[y] = True
+    return bad_rows
+
+
 def extract_candles(color_img, min_col_pixels=2, body_coverage=0.55):
     arr = np.asarray(color_img.convert("RGB"), dtype=np.float32)
     H, W, _ = arr.shape
@@ -150,6 +170,11 @@ def extract_candles(color_img, min_col_pixels=2, body_coverage=0.55):
     is_bull = (G > R + 18) & (G > B + 18)
     is_bear = (R < 90) & (G < 90) & (B < 90)
     colored = is_bull | is_bear
+
+    bad_rows = find_horizontal_line_rows(colored)
+    is_bull[bad_rows, :] = False
+    is_bear[bad_rows, :] = False
+    colored[bad_rows, :] = False
 
     col_counts = colored.sum(axis=0)
     has_col = col_counts >= min_col_pixels
