@@ -6,27 +6,226 @@ import pandas as pd
 import streamlit as st
 from PIL import Image, ImageEnhance, ImageFilter
 
-st.set_page_config(page_title='Temexy Trade Journal', page_icon='📈', layout='wide', initial_sidebar_state='expanded')
+st.set_page_config(page_title='Temexy Trade Journal', page_icon='📈', layout='wide', initial_sidebar_state='collapsed')
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap');
-:root{--bg:#06111F;--panel:#10253F;--text:#F5F8FC;--muted:#9EB0C7;--line:rgba(255,255,255,.09);--teal:#22D3A7;--blue:#5B8CFF;--gold:#F6C85F;--purple:#B78CFF}
-html,body,[class*="css"]{font-family:'Inter',sans-serif}
-.stApp{background:radial-gradient(circle at 8% 0%,rgba(91,140,255,.18),transparent 28%),radial-gradient(circle at 92% 4%,rgba(34,211,167,.13),transparent 26%),linear-gradient(135deg,#06111F 0%,#091A2F 48%,#071426 100%);color:var(--text)}
-[data-testid="stHeader"]{background:transparent}[data-testid="stSidebar"]{background:linear-gradient(180deg,#071426 0%,#0A1930 100%);border-right:1px solid var(--line)}
-[data-testid="stSidebar"] .stRadio label{color:#B7C5D8;font-weight:600}.block-container{max-width:1450px;padding-top:2rem;padding-bottom:4rem}
-h1,h2,h3{font-family:'Space Grotesk',sans-serif!important;letter-spacing:-.025em}h1{font-size:2.5rem!important}h2{font-size:1.65rem!important}h3{font-size:1.18rem!important}p,label,.stCaption{color:#B4C1D3}
-.temexy-hero{padding:28px 32px;border:1px solid rgba(255,255,255,.10);border-radius:24px;background:linear-gradient(135deg,rgba(18,43,72,.94),rgba(11,27,48,.86));box-shadow:0 18px 60px rgba(0,0,0,.25);margin-bottom:24px;position:relative;overflow:hidden}.temexy-hero:after{content:'';position:absolute;width:260px;height:260px;right:-80px;top:-100px;border-radius:50%;background:rgba(34,211,167,.10);filter:blur(10px)}
-.hero-kicker{color:#7FE7D0;font-size:12px;font-weight:800;letter-spacing:.18em;text-transform:uppercase}.hero-title{color:#F8FBFF;font-family:'Space Grotesk';font-size:34px;font-weight:700;margin:6px 0}.hero-sub{color:#AAB9CD;font-size:15px;max-width:780px}
-[data-testid="metric-container"]{background:linear-gradient(145deg,rgba(18,43,72,.94),rgba(11,29,49,.94));border:1px solid var(--line);padding:17px 18px;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.14)}[data-testid="stMetricLabel"]{color:#9EB0C7!important}[data-testid="stMetricValue"]{color:#F7FAFF!important;font-family:'Space Grotesk'}
-.stButton>button,.stFormSubmitButton>button{border-radius:12px;border:1px solid rgba(255,255,255,.10);background:linear-gradient(135deg,#1B7C73,#2467A8);color:white;font-weight:800;min-height:44px;box-shadow:0 8px 20px rgba(22,105,128,.18)}.stButton>button:hover,.stFormSubmitButton>button:hover{border-color:rgba(255,255,255,.3);transform:translateY(-1px)}
-.stTextInput input,.stNumberInput input,.stTextArea textarea,.stSelectbox div[data-baseweb="select"]>div,.stDateInput input,.stTimeInput input{background:#0D2139!important;color:#F4F7FB!important;border:1px solid rgba(255,255,255,.10)!important;border-radius:11px!important}
-[data-testid="stExpander"]{border:1px solid var(--line);border-radius:16px;background:rgba(13,33,57,.62)}[data-testid="stForm"]{border:1px solid var(--line);border-radius:22px;padding:8px 6px;background:rgba(10,27,47,.58)}[data-testid="stDataFrame"]{border:1px solid var(--line);border-radius:16px;overflow:hidden}
-.section-title{display:flex;align-items:center;gap:10px;margin:22px 0 12px;font-family:'Space Grotesk';font-size:17px;font-weight:700;color:#EEF4FB}.section-dot{width:8px;height:8px;border-radius:50%;background:linear-gradient(135deg,var(--teal),var(--blue));box-shadow:0 0 14px rgba(34,211,167,.55)}.small-muted{color:#8FA2BA;font-size:12px}
-.logo-wrap{padding:4px 4px 18px}.logo-box{display:flex;align-items:center;gap:11px}.logo-mark{width:42px;height:42px;border-radius:13px;background:linear-gradient(135deg,#1DD5AA,#477FFF 65%,#A878FF);display:grid;place-items:center;box-shadow:0 8px 24px rgba(55,137,210,.28)}.logo-mark svg{width:26px;height:26px}.logo-name{font-family:'Space Grotesk';font-size:18px;font-weight:800;letter-spacing:.12em;color:#F4F8FD}.logo-tag{font-size:9px;letter-spacing:.2em;color:#7F94AF;font-weight:700;margin-top:2px}footer{visibility:hidden}
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
+
+:root{
+  --bg:#0B0B0A;
+  --panel:#151514;
+  --panel2:#1B1B19;
+  --panel3:#22221F;
+  --text:#F5F0E8;
+  --muted:#A8A197;
+  --line:rgba(245,240,232,.10);
+  --orange:#FF7A45;
+  --orange2:#F4A261;
+  --gold:#E5B85C;
+  --green:#63D39B;
+  --red:#E86A63;
+}
+
+html,body,[class*="css"]{font-family:'DM Sans',sans-serif}
+.stApp{
+  background:
+    radial-gradient(circle at 12% -10%,rgba(255,122,69,.13),transparent 27%),
+    radial-gradient(circle at 90% 8%,rgba(229,184,92,.08),transparent 25%),
+    linear-gradient(145deg,#0B0B0A 0%,#10100F 52%,#0A0A09 100%);
+  color:var(--text);
+}
+[data-testid="stSidebar"]{display:none}
+[data-testid="stHeader"]{background:transparent}
+.block-container{max-width:1500px;padding:1.2rem 2.2rem 4rem}
+
+h1,h2,h3{
+  font-family:'Space Grotesk',sans-serif!important;
+  letter-spacing:-.025em
+}
+h1{font-size:2.35rem!important}
+h2{font-size:1.6rem!important}
+h3{font-size:1.12rem!important}
+p,label,.stCaption{color:#B8B1A7}
+
+.topbar{
+  display:flex;
+  align-items:center;
+  gap:22px;
+  padding:14px 16px;
+  margin-bottom:18px;
+  background:rgba(20,20,18,.92);
+  border:1px solid rgba(245,240,232,.10);
+  border-radius:20px;
+  box-shadow:0 18px 55px rgba(0,0,0,.28);
+  position:sticky;
+  top:8px;
+  z-index:99;
+  backdrop-filter:blur(18px);
+}
+.brand{
+  display:flex;
+  align-items:center;
+  gap:11px;
+  min-width:190px;
+}
+.brand-mark{
+  width:44px;height:44px;border-radius:14px;
+  display:grid;place-items:center;
+  background:linear-gradient(145deg,#FF7A45,#D95D36);
+  box-shadow:0 8px 26px rgba(255,122,69,.20);
+}
+.brand-mark svg{width:27px;height:27px}
+.brand-name{
+  font-family:'Space Grotesk';
+  font-size:19px;font-weight:700;
+  letter-spacing:.12em;color:#F7F1E8
+}
+.brand-tag{
+  font-size:8px;letter-spacing:.22em;
+  color:#938C82;font-weight:700;margin-top:1px
+}
+.topbar-meta{
+  margin-left:auto;
+  display:flex;align-items:center;gap:8px;
+  color:#A8A197;font-size:12px;font-weight:600;
+  white-space:nowrap
+}
+.topbar-meta b{color:#F4EFE6}
+
+div[role="radiogroup"]{
+  display:flex!important;
+  flex-direction:row!important;
+  align-items:center!important;
+  gap:6px!important;
+  flex-wrap:wrap!important;
+  margin:0!important;
+}
+div[role="radiogroup"] > label{
+  background:#191918!important;
+  border:1px solid rgba(245,240,232,.08)!important;
+  border-radius:11px!important;
+  padding:8px 12px!important;
+  min-height:38px!important;
+  transition:.18s ease!important;
+  cursor:pointer!important;
+}
+div[role="radiogroup"] > label:hover{
+  border-color:rgba(255,122,69,.45)!important;
+  background:#22211F!important;
+}
+div[role="radiogroup"] > label:has(input:checked){
+  background:linear-gradient(135deg,#FF7A45,#E9683D)!important;
+  border-color:#FF7A45!important;
+  box-shadow:0 7px 20px rgba(255,122,69,.18)!important;
+}
+div[role="radiogroup"] > label:has(input:checked) p{
+  color:#171311!important;font-weight:800!important
+}
+div[role="radiogroup"] > label p{
+  color:#C8C0B6!important;font-weight:600!important;
+  font-size:12px!important;margin:0!important
+}
+div[role="radiogroup"] > label > div:first-child{display:none!important}
+
+.temexy-hero{
+  padding:30px 34px;
+  border:1px solid rgba(245,240,232,.10);
+  border-radius:26px;
+  background:
+    radial-gradient(circle at 88% 20%,rgba(255,122,69,.14),transparent 24%),
+    linear-gradient(135deg,#191817,#111110);
+  box-shadow:0 20px 70px rgba(0,0,0,.28);
+  margin-bottom:24px;
+  position:relative;overflow:hidden
+}
+.temexy-hero:after{
+  content:'';position:absolute;width:260px;height:260px;
+  right:-90px;top:-110px;border-radius:50%;
+  border:1px solid rgba(255,122,69,.18)
+}
+.hero-kicker{color:#FF9A70;font-size:11px;font-weight:800;letter-spacing:.18em;text-transform:uppercase}
+.hero-title{color:#F7F1E8;font-family:'Space Grotesk';font-size:34px;font-weight:700;margin:6px 0}
+.hero-sub{color:#AAA39A;font-size:15px;max-width:800px}
+
+[data-testid="metric-container"]{
+  background:linear-gradient(145deg,#191918,#121211);
+  border:1px solid var(--line);
+  padding:17px 18px;
+  border-radius:18px;
+  box-shadow:0 12px 35px rgba(0,0,0,.18)
+}
+[data-testid="stMetricLabel"]{color:#9F988E!important}
+[data-testid="stMetricValue"]{color:#F5F0E8!important;font-family:'Space Grotesk'}
+
+.stButton>button,.stFormSubmitButton>button{
+  border-radius:12px!important;
+  border:1px solid rgba(255,255,255,.09)!important;
+  background:linear-gradient(135deg,#FF7A45,#E9683D)!important;
+  color:#171311!important;
+  font-weight:800!important;
+  min-height:44px;
+  box-shadow:0 9px 24px rgba(255,122,69,.14)
+}
+.stButton>button:hover,.stFormSubmitButton>button:hover{
+  border-color:rgba(255,255,255,.24)!important;
+  transform:translateY(-1px)
+}
+
+.stTextInput input,.stNumberInput input,.stTextArea textarea,
+.stSelectbox div[data-baseweb="select"]>div,.stDateInput input,.stTimeInput input{
+  background:#171716!important;
+  color:#F4EFE7!important;
+  border:1px solid rgba(245,240,232,.10)!important;
+  border-radius:11px!important
+}
+[data-testid="stExpander"]{
+  border:1px solid var(--line);
+  border-radius:16px;
+  background:rgba(22,22,20,.72)
+}
+[data-testid="stForm"]{
+  border:1px solid var(--line);
+  border-radius:22px;
+  padding:10px 8px;
+  background:rgba(18,18,17,.72)
+}
+[data-testid="stDataFrame"]{
+  border:1px solid var(--line);
+  border-radius:16px;
+  overflow:hidden
+}
+.section-title{
+  display:flex;align-items:center;gap:10px;
+  margin:22px 0 12px;
+  font-family:'Space Grotesk';
+  font-size:17px;font-weight:700;color:#EFE8DE
+}
+.section-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:var(--orange);
+  box-shadow:0 0 14px rgba(255,122,69,.55)
+}
+.small-muted{color:#8F887F;font-size:12px}
+
+[data-testid="stFileUploaderDropzone"]{
+  background:#171716!important;
+  border:1px dashed rgba(255,122,69,.30)!important;
+  border-radius:16px!important
+}
+.stProgress > div > div{background:var(--orange)!important}
+a{color:#FF9A70!important}
+hr{border-color:rgba(245,240,232,.08)!important}
+footer{visibility:hidden}
+
+@media(max-width:1050px){
+  .topbar{align-items:flex-start;flex-direction:column}
+  .topbar-meta{margin-left:0}
+  .brand{min-width:auto}
+}
 </style>
 """, unsafe_allow_html=True)
+
 BASE=Path('trade_journal_data'); IMG=BASE/'images'; DB=BASE/'trades.db'; IMG.mkdir(parents=True,exist_ok=True)
 
 def conn():
@@ -87,12 +286,42 @@ def num(x):
     except:return '—'
 
 T=trades()
-st.sidebar.markdown('<div class="logo-wrap"><div class="logo-box"><div class="logo-mark"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7 29L7 16M7 16L13 22L19 13L25 19L33 7" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 9V29M8.5 13H15.5M8.5 19H15.5" stroke="#F6C85F" stroke-width="2.2" stroke-linecap="round"/></svg></div><div><div class="logo-name">TEMEXY</div><div class="logo-tag">TRADE JOURNAL</div></div></div></div>', unsafe_allow_html=True); st.sidebar.caption('Evidence over emotion • Process over outcome')
-page=st.sidebar.radio('Navigate',['🏠 Dashboard','➕ New Trade','📖 Trade History','🔎 Trade Detail','📊 Analytics','📚 Setup Library','⚙️ Settings'])
-st.sidebar.metric('Total Trades',len(T))
+
+# ------------------------------------------------------------
+# TOP NAVIGATION — no sidebar
+# ------------------------------------------------------------
+st.markdown('''
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-mark">
+      <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M7 29V16L13 22L19 13L25 19L33 7" stroke="#171311" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M12 9V29M8.5 13H15.5M8.5 19H15.5" stroke="#F8E5C2" stroke-width="2.2" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div>
+      <div class="brand-name">TEMEXY</div>
+      <div class="brand-tag">TRADE JOURNAL</div>
+    </div>
+  </div>
+''', unsafe_allow_html=True)
+
+page = st.radio(
+    'Navigate',
+    ['🏠 Dashboard','➕ New Trade','📖 Trade History','🔎 Trade Detail','📊 Analytics','📚 Setup Library','⚙️ Settings'],
+    horizontal=True,
+    label_visibility='collapsed',
+)
+
 if T:
-    wins=sum(x['result']=='Win' for x in T); net=sum(float(x['actual_r'] or 0) for x in T)
-    st.sidebar.metric('Win Rate',f'{wins/len(T)*100:.1f}%'); st.sidebar.metric('Net R',f'{net:+.2f}R')
+    wins=sum(x['result']=='Win' for x in T)
+    net=sum(float(x['actual_r'] or 0) for x in T)
+    st.markdown(
+        f'<div class="topbar-meta"><span>TRADES <b>{len(T)}</b></span><span>•</span><span>WIN RATE <b>{wins/len(T)*100:.1f}%</b></span><span>•</span><span>NET <b>{net:+.2f}R</b></span></div>',
+        unsafe_allow_html=True
+    )
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 if page=='🏠 Dashboard':
     st.markdown('<div class="temexy-hero"><div class="hero-kicker">TEMEXY • PERFORMANCE CENTER</div><div class="hero-title">Trade with evidence. Review without emotion.</div><div class="hero-sub">Your setups, execution, risk, psychology and results — organized into one clean trading command center.</div></div>', unsafe_allow_html=True); st.markdown('<div class="section-title"><span class="section-dot"></span>Performance Snapshot</div>', unsafe_allow_html=True)
