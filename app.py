@@ -93,41 +93,14 @@ p,label,.stCaption{color:#B8B1A7}
 }
 .topbar-meta b{color:#F4EFE6}
 
-div[role="radiogroup"]{
-  display:flex!important;
-  flex-direction:row!important;
-  align-items:center!important;
-  gap:6px!important;
-  flex-wrap:wrap!important;
-  margin:0!important;
-}
-div[role="radiogroup"] > label{
-  background:#191918!important;
-  border:1px solid rgba(245,240,232,.08)!important;
-  border-radius:11px!important;
-  padding:8px 12px!important;
-  min-height:38px!important;
-  transition:.18s ease!important;
-  cursor:pointer!important;
-}
-div[role="radiogroup"] > label:hover{
-  border-color:rgba(255,122,69,.45)!important;
-  background:#22211F!important;
-}
-div[role="radiogroup"] > label:has(input:checked){
-  background:linear-gradient(135deg,#FF7A45,#E9683D)!important;
-  border-color:#FF7A45!important;
-  box-shadow:0 7px 20px rgba(255,122,69,.18)!important;
-}
-div[role="radiogroup"] > label:has(input:checked) p{
-  color:#171311!important;font-weight:800!important
-}
-div[role="radiogroup"] > label p{
-  color:#C8C0B6!important;font-weight:600!important;
-  font-size:12px!important;margin:0!important
-}
-div[role="radiogroup"] > label > div:first-child{display:none!important}
-
+/* Premium top navigation */
+.nav-wrap{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+.nav-link{display:inline-flex;align-items:center;justify-content:center;height:40px;padding:0 14px;border-radius:10px;color:#BDB5AA!important;text-decoration:none!important;font-size:12px;font-weight:700;letter-spacing:.01em;border:1px solid transparent;transition:all .18s ease;white-space:nowrap}
+.nav-link:hover{color:#F6F0E8!important;background:#211F1C;border-color:rgba(245,240,232,.10)}
+.nav-link.active{color:#17130F!important;background:#F29B57;border-color:#F29B57;box-shadow:0 7px 22px rgba(242,155,87,.16)}
+.topbar-meta{margin-left:auto;display:flex;align-items:center;gap:14px;color:#8F877D;font-size:11px;font-weight:700;letter-spacing:.08em;white-space:nowrap;border-left:1px solid rgba(245,240,232,.08);padding-left:18px}
+.topbar-meta b{color:#F4EFE6;letter-spacing:0}
+@media(max-width:1050px){.topbar{flex-wrap:wrap}.nav-wrap{order:3;width:100%;overflow-x:auto;padding-top:3px}.topbar-meta{margin-left:0;border-left:0;padding-left:0}}
 .temexy-hero{
   padding:30px 34px;
   border:1px solid rgba(245,240,232,.10);
@@ -288,40 +261,30 @@ def num(x):
 T=trades()
 
 # ------------------------------------------------------------
-# TOP NAVIGATION — no sidebar
 # ------------------------------------------------------------
-st.markdown('''
-<div class="topbar">
-  <div class="brand">
-    <div class="brand-mark">
-      <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M7 29V16L13 22L19 13L25 19L33 7" stroke="#171311" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M12 9V29M8.5 13H15.5M8.5 19H15.5" stroke="#F8E5C2" stroke-width="2.2" stroke-linecap="round"/>
-      </svg>
-    </div>
-    <div>
-      <div class="brand-name">TEMEXY</div>
-      <div class="brand-tag">TRADE JOURNAL</div>
-    </div>
-  </div>
-''', unsafe_allow_html=True)
-
-page = st.radio(
-    'Navigate',
-    ['🏠 Dashboard','➕ New Trade','📖 Trade History','🔎 Trade Detail','📊 Analytics','📚 Setup Library','⚙️ Settings'],
-    horizontal=True,
-    label_visibility='collapsed',
-)
-
-if T:
-    wins=sum(x['result']=='Win' for x in T)
-    net=sum(float(x['actual_r'] or 0) for x in T)
-    st.markdown(
-        f'<div class="topbar-meta"><span>TRADES <b>{len(T)}</b></span><span>•</span><span>WIN RATE <b>{wins/len(T)*100:.1f}%</b></span><span>•</span><span>NET <b>{net:+.2f}R</b></span></div>',
-        unsafe_allow_html=True
-    )
-
-st.markdown('</div>', unsafe_allow_html=True)
+# TOP NAVIGATION — clean product-style header
+# ------------------------------------------------------------
+page_map={
+    'dashboard':'🏠 Dashboard',
+    'new-trade':'➕ New Trade',
+    'history':'📖 Trade History',
+    'detail':'🔎 Trade Detail',
+    'analytics':'📊 Analytics',
+    'setups':'📚 Setup Library',
+    'settings':'⚙️ Settings',
+}
+current_key=st.query_params.get('page','dashboard')
+if current_key not in page_map: current_key="dashboard"
+page=page_map[current_key]
+wins=sum(x['result']=='Win' for x in T) if T else 0
+net=sum(float(x['actual_r'] or 0) for x in T) if T else 0
+win_rate=(wins/len(T)*100) if T else 0
+nav_html='<div class="topbar"><div class="brand"><div class="brand-mark"><svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7 29V16L13 22L19 13L25 19L33 7" stroke="#171311" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 9V29M8.5 13H15.5M8.5 19H15.5" stroke="#F8E5C2" stroke-width="2.2" stroke-linecap="round"/></svg></div><div><div class="brand-name">TEMEXY</div><div class="brand-tag">TRADE JOURNAL</div></div></div><div class="nav-wrap">'
+for key,label in [('dashboard','Dashboard'),('new-trade','New Trade'),('history','Trade History'),('detail','Trade Detail'),('analytics','Analytics'),('setups','Setup Library'),('settings','Settings')]:
+    active=' active' if key==current_key else ''
+    nav_html += f'<a class="nav-link{active}" href="?page={key}">{label}</a>'
+nav_html += f'<div class="topbar-meta"><span>TRADES <b>{len(T)}</b></span><span>WIN RATE <b>{win_rate:.1f}%</b></span><span>NET <b>{net:+.2f}R</b></span></div></div>'
+st.markdown(nav_html, unsafe_allow_html=True)
 
 if page=='🏠 Dashboard':
     st.markdown('<div class="temexy-hero"><div class="hero-kicker">TEMEXY • PERFORMANCE CENTER</div><div class="hero-title">Trade with evidence. Review without emotion.</div><div class="hero-sub">Your setups, execution, risk, psychology and results — organized into one clean trading command center.</div></div>', unsafe_allow_html=True); st.markdown('<div class="section-title"><span class="section-dot"></span>Performance Snapshot</div>', unsafe_allow_html=True)
