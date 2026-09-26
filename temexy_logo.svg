@@ -1,0 +1,20 @@
+<svg width="720" height="190" viewBox="0 0 720 190" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#23D5AB"/>
+      <stop offset="0.55" stop-color="#4F8CFF"/>
+      <stop offset="1" stop-color="#C084FC"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" x2="1">
+      <stop offset="0" stop-color="#F6C85F"/>
+      <stop offset="1" stop-color="#F59E0B"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="178" height="178" rx="48" fill="#0B1730" stroke="url(#g)" stroke-width="6"/>
+  <path d="M48 126 L48 86 M48 86 L66 104 L84 73 L102 92 L124 48 L148 70" fill="none" stroke="url(#g)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M49 144 H149" stroke="#E8EEF9" stroke-opacity=".45" stroke-width="5" stroke-linecap="round"/>
+  <path d="M68 52 V122 M57 72 H79 M57 100 H79" stroke="url(#gold)" stroke-width="7" stroke-linecap="round"/>
+  <path d="M118 64 V116 M107 82 H129 M107 98 H129" stroke="#23D5AB" stroke-width="7" stroke-linecap="round"/>
+  <text x="212" y="108" font-family="Arial, Helvetica, sans-serif" font-size="68" font-weight="800" letter-spacing="4" fill="#F4F7FB">TEMEXY</text>
+  <text x="218" y="145" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="600" letter-spacing="6" fill="#9FB0C9">TRADE JOURNAL</text>
+</svg>
