@@ -24,9 +24,13 @@ model, processor = load_clip_model()
 def get_image_embedding(image):
     inputs = processor(images=image, return_tensors="pt")
     with torch.no_grad():
-        features = model.get_image_features(**inputs)
-    features = features / features.norm(p=2, dim=-1, keepdim=True)
-    return features.cpu().numpy().flatten()
+        outputs = model.get_image_features(**inputs)
+        # Extract tensor if wrapped in model output object
+        tensor = outputs.image_embeds if hasattr(outputs, 'image_embeds') else outputs
+    # Calculate vector norm safely
+    norm = torch.linalg.vector_norm(tensor, dim=-1, keepdim=True)
+    normalized = tensor / norm
+    return normalized.cpu().numpy().flatten()
 
 def load_database():
     if os.path.exists(EMBEDDINGS_FILE):
