@@ -302,7 +302,18 @@ def section(title):
 # the signed-in user's own id (st.user.sub), so one person can
 # never see another person's trades.
 # ------------------------------------------------------------
-if not st.user.is_logged_in:
+try:
+    _signed_in = st.user.is_logged_in
+except Exception:
+    st.error(
+        "Google sign-in isn't active on this deployment yet. This means Streamlit can't find your "
+        "auth config — usually because the `[auth]` / `[auth.google]` secrets aren't set on **this** "
+        "environment (Settings → Secrets on Streamlit Cloud), or the app hasn't been rebooted since "
+        "you added them. See the setup steps for the exact fix."
+    )
+    st.stop()
+
+if not _signed_in:
     st.markdown(
         '<div class="temexy-hero" style="max-width:520px;margin:8vh auto 0;text-align:center">'
         '<div class="hero-kicker">TEMEXY • TRADE JOURNAL</div>'
