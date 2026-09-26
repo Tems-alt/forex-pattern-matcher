@@ -5,11 +5,11 @@ import torch
 import streamlit as st
 import requests
 from io import BytesIO
-from PIL import Image
+from PIL import Image, ImageOps, ImageEnhance
 from transformers import CLIPProcessor, CLIPModel
 
-st.set_page_config(page_title="Forex Strict Model Matcher", layout="wide")
-st.title("🎯 Strict Forex Model & FVG Matcher")
+st.set_page_config(page_title="Forex Strict Price Action Matcher", layout="wide")
+st.title("🎯 Strict Forex Price Action & FVG Matcher")
 
 STORAGE_DIR = "setup_library"
 EMBEDDINGS_FILE = "embeddings.pkl"
@@ -23,13 +23,30 @@ def load_clip_model():
 
 model, processor = load_clip_model()
 
-def get_image_embedding(image):
-    # Crop central chart region to focus strictly on candlesticks/FVG structure
-    width, height = image.size
-    crop_box = (int(width * 0.05), int(height * 0.1), int(width * 0.95), int(height * 0.9))
-    cropped_img = image.crop(crop_box)
+def preprocess_chart_structure(image):
+    """
+    Strips away background color themes, UI elements, and converts chart
+    into a high-contrast grayscale edge structure to focus ONLY on candlestick shapes.
+    """
+    # Crop central area (remove TradingView top/left UI bars)
+    w, h = image.size
+    crop_box = (int(w * 0.08), int(h * 0.12), int(w * 0.92), int(h * 0.88))
+    cropped = image.crop(crop_box)
     
-    inputs = processor(images=cropped_img, return_tensors="pt")
+    # Convert to grayscale to remove green/red/dark-mode theme bias
+    gray = cropped.convert("L")
+    
+    # Increase contrast to emphasize candlestick wicks and bodies
+    enhancer = ImageEnhance.Contrast(gray)
+    high_contrast = enhancer.enhance(2.0)
+    
+    # Convert back to RGB for CLIP model ingestion
+    return high_contrast.convert("RGB")
+
+def get_image_embedding(image):
+    processed_img = preprocess_chart_structure(image)
+    inputs = processor(images=processed_img, return_tensors="pt")
+    
     with torch.no_grad():
         outputs = model.get_image_features(**inputs)
         if hasattr(outputs, 'image_embeds'):
@@ -66,7 +83,7 @@ def save_database(db):
 db = load_database()
 
 # ---------------------------------------------------------
-# SIDEBAR: SAVE STRICT SETUPS
+# SIDEBAR: SAVE MASTER SETUPS
 # ---------------------------------------------------------
 st.sidebar.header("📥 Save Master Model Setup")
 
@@ -87,7 +104,7 @@ else:
 
 setup_label = st.sidebar.text_input("Setup Name / Pair (e.g. USDCHF_H1_FVG_Sweep)", key="setup_name")
 
-st.sidebar.markdown("### 📋 Strict Model Elements")
+st.sidebar.markdown("### 📋 Strict Model Requirements")
 has_fvg = st.sidebar.checkbox("Fair Value Gap (FVG) Present", value=True)
 has_sweep = st.sidebar.checkbox("Liquidity Sweep / Raid", value=True)
 has_mss = st.sidebar.checkbox("Market Structure Shift (MSS)", value=True)
@@ -117,8 +134,7 @@ if st.sidebar.button("Save Strict Setup to Database"):
 st.sidebar.markdown("---")
 st.sidebar.write(f"📁 **Total Saved Models:** {len(db)}")
 
-# Set strict threshold (Default 90%)
-similarity_threshold = st.sidebar.slider("Strict Match Threshold (%)", min_value=80, max_value=98, value=90, step=1)
+similarity_threshold = st.sidebar.slider("Strict Match Threshold (%)", min_value=85, max_value=99, value=94, step=1)
 
 # ---------------------------------------------------------
 # MAIN AREA: STRICT SCANNING
@@ -167,10 +183,10 @@ if query_img:
         with col2:
             if not filtered_matches:
                 st.error(f"❌ **INVALID SETUP — DOES NOT MEET YOUR MODEL RULES**")
-                st.write(f"The structural candle pattern on this live chart scores below your **{similarity_threshold}% strict threshold**. It does not strictly follow your required FVG and liquidity sweep structure. **DO NOT ENTER THIS TRADE.**")
+                st.write(f"The candlestick structure on this live chart scores below your **{similarity_threshold}% strict threshold** (Top raw match was {round(scores[0][0]*100, 1)}%). Direction or FVG geometry does not match. **DO NOT ENTER THIS TRADE.**")
             else:
                 top_matches = filtered_matches[:3]
-                st.success(f"✅ **QUALIFIED SETUP DETECTED ({round(top_matches[0][0]*100, 1)}% Structural Match)**")
+                st.success(f"✅ **QUALIFIED MASTER SETUP DETECTED ({round(top_matches[0][0]*100, 1)}% Structural Match)**")
                 
                 rules = top_matches[0][5]
                 st.markdown(f"**Required Model Rules Confirmed:**")
