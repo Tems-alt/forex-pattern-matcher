@@ -316,6 +316,35 @@ def hero(kicker, title, sub):
 def section(title):
     st.markdown(f'<div class="section-title"><span class="section-dot"></span>{title}</div>', unsafe_allow_html=True)
 
+# A public privacy-policy page, reachable WITHOUT signing in, living on this
+# app's own domain so Google's "Authorized domains" check accepts it.
+# Reachable at: https://<your-app>.streamlit.app/?policy=1
+if st.query_params.get('policy') == '1':
+    st.title('Temexy Trade Journal — Privacy Policy')
+    st.caption('Last updated: September 27, 2026')
+    st.markdown('''
+Temexy Trade Journal is a personal trading journal app. This page explains, plainly, what data it handles.
+
+**What we collect**
+- From Google Sign-In: your name, email address, and a unique account identifier, so we can show you your own journal and no one else's.
+- Trade data you enter yourself: dates, markets, prices, notes, and any screenshots you choose to upload.
+
+**What we don't do**
+- We don't sell or share your data with advertisers or third parties.
+- We don't show ads.
+- One person can never see another person's trades.
+
+**Optional AI Assistant**
+The AI Assistant feature is off by default and requires you to supply your own Anthropic API key. If you use it, your questions and a summary of your own trade data are sent to Anthropic's API to generate a response. Your API key is kept only in your browser session and is never written to our database.
+
+**Where data lives**
+Your trades and screenshots are stored in this app's database. This is a small, independently run project — treat it accordingly, and keep your own backups of anything important.
+
+**Contact**
+Questions about this policy: e.fabiyi0583@miva.edu.ng
+''')
+    st.stop()
+
 # ------------------------------------------------------------
 # GOOGLE SIGN-IN — gates the whole app. Nothing below this runs
 # for a signed-out visitor, and every query below is scoped to
