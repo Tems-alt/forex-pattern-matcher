@@ -13,17 +13,28 @@ st.set_page_config(
     layout="wide"
 )
 
-# Connect to Supabase dynamically
+# Helper function to find secrets wherever they are located in TOML
+def get_secret(key_name):
+    if key_name in st.secrets:
+        return st.secrets[key_name]
+    # Check if nested inside auth or auth.google sections
+    for section in ["auth", "auth.google"]:
+        if section in st.secrets and key_name in st.secrets[section]:
+            return st.secrets[section][key_name]
+    return None
+
+# Connect to Supabase
 def get_supabase():
+    url = get_secret("SUPABASE_URL")
+    key = get_secret("SUPABASE_KEY")
+    
+    if not url or not key:
+        st.error("⚠️ Could not find SUPABASE_URL or SUPABASE_KEY in Secrets. Check section formatting in TOML.")
+        return None
     try:
-        url = st.secrets.get("SUPABASE_URL")
-        key = st.secrets.get("SUPABASE_KEY")
-        if not url or not key:
-            st.error("SUPABASE_URL or SUPABASE_KEY not found in Streamlit Secrets.")
-            return None
         return create_client(url, key)
     except Exception as e:
-        st.error(f"Supabase connection error: {e}")
+        st.error(f"⚠️ Supabase connection error: {e}")
         return None
 
 # ==========================================
@@ -42,7 +53,8 @@ def render_blog_page():
     st.sidebar.subheader("🔑 Admin Panel")
     admin_password = st.sidebar.text_input("Admin Password", type="password")
     
-    is_admin = admin_password == st.secrets.get("ADMIN_PASSWORD", "")
+    expected_password = get_secret("ADMIN_PASSWORD") or ""
+    is_admin = admin_password != "" and admin_password == expected_password
 
     if is_admin:
         st.sidebar.success("Logged in as Admin")
