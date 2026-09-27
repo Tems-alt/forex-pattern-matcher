@@ -199,6 +199,23 @@ a{color:#74BCFF!important}
 .small-muted{color:#6E7C8B;font-size:10px}
 .positive{color:var(--green)!important}.negative{color:var(--red)!important}.gold{color:#DCE7F2!important}
 
+/* Analysis posts — meant to be READ, so bigger and higher contrast
+   than the dense trade tables elsewhere in the app */
+.post-title{
+  font-family:'Space Grotesk';font-weight:700;font-size:23px;
+  color:#FFFFFF;line-height:1.35;margin-bottom:3px
+}
+.post-meta{font-size:12px;color:#87ADDE;font-weight:600;margin-bottom:14px}
+.post-body{
+  font-size:16px;line-height:1.8;color:#EFF4FA;font-weight:500;
+  white-space:pre-wrap;word-wrap:break-word
+}
+@media(max-width:560px){
+  .post-title{font-size:20px}
+  .post-meta{font-size:11px}
+  .post-body{font-size:15.5px;line-height:1.75}
+}
+
 /* Creator card */
 .creator-card{
   display:flex;gap:16px;align-items:center;padding:15px;
@@ -771,7 +788,7 @@ PREF = get_preferences(USER_ID)
 # ------------------------------------------------------------
 PAGE_MAP = {
     "dashboard": "Dashboard",
-    "blog": "Blog",
+    "insights": "Analysis",
     "journal": "Journal",
     "new-trade": "New Trade",
     "detail": "Trade Detail",
@@ -939,17 +956,18 @@ if current_key == "dashboard":
 
 
 # ------------------------------------------------------------
-# BLOG — admin-authored analysis, everyone can read/like/comment
+# ANALYSIS — admin-authored market analysis; everyone reads,
+# likes and comments; only the admin publishes.
 # ------------------------------------------------------------
-elif current_key == "blog":
+elif current_key == "insights":
     hero(
         "MARKET INSIGHT",
-        "Blog",
-        "Analysis and commentary from Temexy. Everyone can read, like and comment — only Temexy publishes.",
+        "Analysis",
+        "Every write-up here is posted by Temexy directly. Read it, like it, discuss it in the comments below.",
     )
 
     if IS_ADMIN:
-        with st.expander("＋ New post", expanded=False):
+        with st.expander("＋ New analysis", expanded=False):
             with st.form("new_post_form", clear_on_submit=True):
                 post_title = st.text_input("Title")
                 post_content = st.text_area("Analysis", height=200)
@@ -971,17 +989,21 @@ elif current_key == "blog":
     posts = get_posts()
     if not posts:
         st.info(
-            "No posts yet. Use the form above to publish the first one."
-            if IS_ADMIN else "No posts yet — check back soon."
+            "Nothing posted yet. Use the form above to publish the first one."
+            if IS_ADMIN else "Nothing posted yet — check back soon."
         )
     else:
         for post in posts:
             with st.container(border=True):
-                st.markdown(f"### {post['title']}")
-                st.caption(f"{post['author_name']} · {post['created_at'][:16].replace('T',' ')}")
+                st.markdown(
+                    f"""<div class="post-title">{post['title']}</div>
+                    <div class="post-meta">{post['author_name']} · {post['created_at'][:16].replace('T',' ')}</div>""",
+                    unsafe_allow_html=True,
+                )
                 if post.get("image") and os.path.exists(post["image"]):
                     st.image(post["image"], use_container_width=True)
-                st.write(post["content"])
+                st.markdown(f'<div class="post-body">{post["content"]}</div>', unsafe_allow_html=True)
+                st.markdown("")
 
                 liked = user_has_liked(post["id"], USER_ID)
                 like_count = get_like_count(post["id"])
@@ -990,14 +1012,14 @@ elif current_key == "blog":
                 lcol, ccol, dcol = st.columns([1, 1, 2])
                 with lcol:
                     like_label = f"♥ {like_count}" if liked else f"♡ {like_count}"
-                    if st.button(like_label, key=f"like_{post['id']}"):
+                    if st.button(like_label, key=f"like_{post['id']}", use_container_width=True):
                         toggle_like(post["id"], USER_ID)
                         st.rerun()
                 with ccol:
                     st.caption(f"💬 {len(comments)} comment{'s' if len(comments) != 1 else ''}")
                 with dcol:
                     if IS_ADMIN:
-                        if st.button("Delete post", key=f"delpost_{post['id']}"):
+                        if st.button("Delete post", key=f"delpost_{post['id']}", use_container_width=True):
                             delete_post(post["id"])
                             st.rerun()
 
@@ -1013,7 +1035,7 @@ elif current_key == "blog":
                         st.markdown("---")
 
                     new_comment = st.text_input("Add a comment", key=f"newcomment_{post['id']}")
-                    if st.button("Post comment", key=f"submitcomment_{post['id']}"):
+                    if st.button("Post comment", key=f"submitcomment_{post['id']}", use_container_width=True):
                         if new_comment.strip():
                             add_comment(post["id"], USER_ID, USER_NAME, new_comment.strip())
                             st.rerun()
