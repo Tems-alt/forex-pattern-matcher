@@ -241,8 +241,28 @@ def init():
     # Migration for DBs created before multi-user support existed.
     try: c.execute('ALTER TABLE trades ADD COLUMN user_id TEXT')
     except sqlite3.OperationalError: pass
+    c.execute('''CREATE TABLE IF NOT EXISTS users(
+    user_id TEXT PRIMARY KEY, email TEXT, name TEXT, first_seen TEXT, last_seen TEXT)''')
     c.commit(); c.close()
 init()
+
+def touch_user(user_id,email,name):
+    """Records that this person exists / was just active. Called once per
+    page load for a signed-in user — cheap, and it's how we can answer
+    'how many people have logged in' without any extra tracking service."""
+    c=conn(); now=datetime.now().isoformat()
+    row=c.execute('SELECT user_id FROM users WHERE user_id=?',(user_id,)).fetchone()
+    if row:
+        c.execute('UPDATE users SET last_seen=?,email=?,name=? WHERE user_id=?',(now,email,name,user_id))
+    else:
+        c.execute('INSERT INTO users(user_id,email,name,first_seen,last_seen) VALUES(?,?,?,?,?)',(user_id,email,name,now,now))
+    c.commit(); c.close()
+
+def all_users():
+    c=conn(); x=[dict(r) for r in c.execute('SELECT * FROM users ORDER BY last_seen DESC')]; c.close(); return x
+
+def total_trade_count():
+    c=conn(); n=c.execute('SELECT COUNT(*) FROM trades').fetchone()[0]; c.close(); return n
 
 def trades(user_id):
     c=conn(); x=[dict(r) for r in c.execute('SELECT * FROM trades WHERE user_id=? ORDER BY trade_date DESC,trade_time DESC,id DESC',(user_id,))]; c.close(); return x
@@ -329,7 +349,13 @@ if not _signed_in:
     st.stop()
 
 USER_ID = st.user.sub
-USER_NAME = st.user.get('name') or st.user.get('email') or 'Trader'
+USER_EMAIL = st.user.get('email') or ''
+USER_NAME = st.user.get('name') or USER_EMAIL or 'Trader'
+touch_user(USER_ID, USER_EMAIL, USER_NAME)
+# Change this to your own Google account email — only this address sees the
+# "Who's using this" panel on the Settings page. Everyone else never sees it.
+ADMIN_EMAILS = {'e.fabiyi0583@miva.edu.ng'}
+IS_ADMIN = USER_EMAIL in ADMIN_EMAILS
 T=trades(USER_ID)
 
 top_l, top_r = st.columns([6,1])
@@ -621,5 +647,19 @@ elif current_key=='settings':
         st.write('✅ '+x)
     st.warning('Important for Streamlit Cloud: this version stores the SQLite database and screenshots in the app filesystem. For a permanent cloud journal, connect persistent storage/database before building a large archive.')
     st.code(str(BASE))
+
+    if IS_ADMIN:
+        st.markdown('---')
+        section('👑 Who\'s using this (admin only)')
+        st.caption('Only visible to you — nobody else signing in can see this panel.')
+        users_list=all_users()
+        u1,u2=st.columns(2)
+        u1.metric('Total people who have signed in', len(users_list))
+        u2.metric('Total trades across everyone', total_trade_count())
+        udf=pd.DataFrame(users_list)
+        if not udf.empty:
+            st.dataframe(udf[['name','email','first_seen','last_seen']], use_container_width=True, hide_index=True)
+        else:
+            st.caption('Nobody but you has signed in yet.')
 
 st.markdown('---'); st.caption('TEMEXY TRADE JOURNAL • Evidence over emotion • Process over outcome')
