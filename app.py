@@ -5,7 +5,7 @@ import plotly.express as px
 from supabase import create_client, Client
 
 # ==========================================
-# 1. PAGE & DATABASE CONFIGURATION
+# 1. PAGE CONFIGURATION
 # ==========================================
 st.set_page_config(
     page_title="My Streamlit App & Analysis Blog",
@@ -13,18 +13,18 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize Supabase client using secrets
-@st.cache_resource
-def init_supabase():
+# Connect to Supabase dynamically
+def get_supabase():
     try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_KEY"]
+        url = st.secrets.get("SUPABASE_URL")
+        key = st.secrets.get("SUPABASE_KEY")
+        if not url or not key:
+            st.error("SUPABASE_URL or SUPABASE_KEY not found in Streamlit Secrets.")
+            return None
         return create_client(url, key)
     except Exception as e:
-        st.error("Missing or invalid Supabase credentials in Streamlit Secrets.")
+        st.error(f"Supabase connection error: {e}")
         return None
-
-supabase = init_supabase()
 
 # ==========================================
 # 2. BLOG PAGE MODULE
@@ -33,8 +33,8 @@ def render_blog_page():
     st.title("📈 Market Insights & Analysis Blog")
     st.caption("Browse analysis posts below, leave a comment, or hit like!")
 
+    supabase = get_supabase()
     if not supabase:
-        st.warning("Database connection is missing. Please configure your Streamlit Secrets.")
         return
 
     # --- ADMIN SIDEBAR CONTROLS ---
@@ -42,7 +42,6 @@ def render_blog_page():
     st.sidebar.subheader("🔑 Admin Panel")
     admin_password = st.sidebar.text_input("Admin Password", type="password")
     
-    # Authenticate against ADMIN_PASSWORD set in secrets
     is_admin = admin_password == st.secrets.get("ADMIN_PASSWORD", "")
 
     if is_admin:
@@ -140,7 +139,6 @@ def render_main_page():
     st.title("📊 Main Dashboard")
     st.write("Welcome to your application dashboard! Place your main tools, metrics, and visualizers here.")
     
-    # Sample Plotly chart
     df = pd.DataFrame({
         "Category": ["A", "B", "C", "D"],
         "Values": [23, 45, 56, 78]
