@@ -4,6 +4,7 @@ import uuid
 import math
 from pathlib import Path
 from datetime import datetime, date, time
+import calendar as pycalendar
 
 import numpy as np
 import pandas as pd
@@ -247,6 +248,30 @@ a{color:#74BCFF!important}
 .pill-win{color:var(--green);border-color:rgba(56,211,159,.20);background:rgba(56,211,159,.05)}
 .pill-loss{color:var(--red);border-color:rgba(241,91,104,.20);background:rgba(241,91,104,.05)}
 .pill-be{color:#B9C7D6;border-color:rgba(185,199,214,.18);background:rgba(185,199,214,.04)}
+
+/* Trading calendar */
+.calendar-wrap{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#0B1015;box-shadow:0 14px 38px rgba(0,0,0,.18)}
+.calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}
+.cal-head{padding:10px 8px;text-align:center;font-size:9px;letter-spacing:.12em;color:#6F7F90;background:#0E141B;border-right:1px solid var(--line);border-bottom:1px solid var(--line);font-weight:800}
+.cal-cell{min-height:92px;padding:9px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:#0C1117;position:relative}
+.cal-cell:nth-child(7n){border-right:0}
+.cal-empty{background:#080C11}
+.cal-day{font-family:'Space Grotesk';font-size:12px;font-weight:700;color:#DCE7F2}
+.cal-pnl{margin-top:13px;font-family:'Space Grotesk';font-size:12px;font-weight:700}
+.cal-r{margin-top:4px;font-size:9px;color:#7D8B9A}
+.cal-no-trade{margin-top:25px;font-size:9px;color:#4F5D6C}
+.cal-profit{background:linear-gradient(145deg,rgba(56,211,159,.10),rgba(12,17,23,.95))}
+.cal-profit .cal-pnl{color:var(--green)}
+.cal-loss{background:linear-gradient(145deg,rgba(241,91,104,.10),rgba(12,17,23,.95))}
+.cal-loss .cal-pnl{color:var(--red)}
+.cal-flat .cal-pnl{color:#AEBBCC}
+@media(max-width:700px){
+  .cal-cell{min-height:74px;padding:6px}
+  .cal-pnl{font-size:10px;margin-top:8px}
+  .cal-r{font-size:8px}
+  .cal-no-trade{margin-top:17px}
+  .cal-head{font-size:7px;padding:8px 3px}
+}
 
 /* Responsive */
 @media(max-width:900px){
@@ -809,6 +834,7 @@ PAGE_MAP = {
     "dashboard": "Dashboard",
     "insights": "Analysis",
     "journal": "Journal",
+    "calendar": "Calendar",
     "new-trade": "New Trade",
     "detail": "Trade Detail",
     "analytics": "Analytics",
@@ -981,6 +1007,115 @@ if current_key == "dashboard":
         b.metric("Setup quality", f"{d.setup_quality.mean():.1f}/10")
         c.metric("Confidence", f"{d.confidence.mean():.1f}/10")
 
+
+# ------------------------------------------------------------
+# TRADING CALENDAR
+# ------------------------------------------------------------
+elif current_key == "calendar":
+    hero(
+        "DAILY PERFORMANCE",
+        "Trading Calendar",
+        "See exactly how each trading day performed. Green days are net profit; red days are net loss.",
+    )
+
+    if not T:
+        st.info("No trades recorded yet. Once you log trades, your daily profit and loss will appear here.")
+    else:
+        dcal = pd.DataFrame(T)
+        dcal["date_obj"] = pd.to_datetime(dcal["trade_date"], errors="coerce").dt.date
+        dcal["actual_r"] = pd.to_numeric(dcal["actual_r"], errors="coerce").fillna(0.0)
+        dcal["pnl_money"] = pd.to_numeric(dcal["pnl_money"], errors="coerce").fillna(0.0)
+
+        available_dates = dcal["date_obj"].dropna()
+        min_year = int(min(available_dates).year) if len(available_dates) else date.today().year
+        year_options = list(range(min_year, max(date.today().year, min_year) + 1))
+        year_index = year_options.index(date.today().year) if date.today().year in year_options else len(year_options) - 1
+
+        a, b = st.columns([1, 1])
+        with a:
+            cal_year = st.selectbox("Year", year_options, index=year_index)
+        with b:
+            cal_month = st.selectbox("Month", list(range(1, 13)), index=date.today().month - 1, format_func=lambda m: pycalendar.month_name[m])
+
+        month_start = date(cal_year, cal_month, 1)
+        month_end = date(cal_year, cal_month, pycalendar.monthrange(cal_year, cal_month)[1])
+        dm = dcal[(dcal["date_obj"] >= month_start) & (dcal["date_obj"] <= month_end)].copy()
+
+        daily = dm.groupby("date_obj", as_index=False).agg(
+            pnl=("pnl_money", "sum"),
+            net_r=("actual_r", "sum"),
+            trades=("id", "count"),
+            wins=("actual_r", lambda x: int((x > 0).sum())),
+            losses=("actual_r", lambda x: int((x < 0).sum())),
+        )
+        daily_map = {r["date_obj"]: r for _, r in daily.iterrows()}
+
+        net_pnl = float(dm["pnl_money"].sum()) if not dm.empty else 0.0
+        net_r_month = float(dm["actual_r"].sum()) if not dm.empty else 0.0
+        trading_days = len(daily)
+        winning_days = int(sum(float(r["pnl"]) > 0 for r in daily_map.values()))
+        losing_days = int(sum(float(r["pnl"]) < 0 for r in daily_map.values()))
+
+        currency = PREF.get("currency", "USD")
+        a, b, c, e = st.columns(4)
+        a.metric("Monthly P/L", money(net_pnl, currency))
+        b.metric("Net R", f"{net_r_month:+.2f}R")
+        c.metric("Trading days", trading_days)
+        e.metric("Win / Loss days", f"{winning_days} / {losing_days}")
+
+        section(f"{pycalendar.month_name[cal_month]} {cal_year}")
+
+        # Calendar grid: Monday → Sunday.
+        weeks = pycalendar.monthcalendar(cal_year, cal_month)
+        weekday_headers = "".join(f'<div class="cal-head">{x}</div>' for x in ["MON","TUE","WED","THU","FRI","SAT","SUN"])
+        cells = []
+        for week in weeks:
+            for day_num in week:
+                if day_num == 0:
+                    cells.append('<div class="cal-cell cal-empty"></div>')
+                    continue
+                current_date = date(cal_year, cal_month, day_num)
+                row = daily_map.get(current_date)
+                if row is None:
+                    cells.append(
+                        f'<div class="cal-cell"><div class="cal-day">{day_num}</div><div class="cal-no-trade">No trade</div></div>'
+                    )
+                    continue
+
+                pnl = float(row["pnl"])
+                rr = float(row["net_r"])
+                ntrades = int(row["trades"])
+                cls = "cal-profit" if pnl > 0 else "cal-loss" if pnl < 0 else "cal-flat"
+                sign = "+" if pnl > 0 else ""
+                cells.append(
+                    f'''<div class="cal-cell {cls}">
+                        <div class="cal-day">{day_num}</div>
+                        <div class="cal-pnl">{sign}{pnl:,.2f} {currency}</div>
+                        <div class="cal-r">{rr:+.2f}R · {ntrades} trade{'s' if ntrades != 1 else ''}</div>
+                    </div>'''
+                )
+
+        st.markdown(
+            f'''<div class="calendar-wrap">
+                <div class="calendar-grid calendar-header">{weekday_headers}</div>
+                <div class="calendar-grid">{"".join(cells)}</div>
+            </div>''',
+            unsafe_allow_html=True,
+        )
+
+        section("Daily record")
+        if daily.empty:
+            st.caption("No trades were recorded in this month.")
+        else:
+            daily_display = daily.sort_values("date_obj", ascending=False).copy()
+            daily_display["date_obj"] = daily_display["date_obj"].astype(str)
+            daily_display["pnl"] = daily_display["pnl"].map(lambda x: money(x, currency))
+            daily_display["net_r"] = daily_display["net_r"].map(lambda x: f"{x:+.2f}R")
+            daily_display = daily_display.rename(columns={
+                "date_obj": "Date", "pnl": "Daily P/L", "net_r": "Net R",
+                "trades": "Trades", "wins": "Wins", "losses": "Losses"
+            })
+            st.dataframe(daily_display[["Date", "Daily P/L", "Net R", "Trades", "Wins", "Losses"]], use_container_width=True, hide_index=True)
 
 # ------------------------------------------------------------
 # ANALYSIS — admin-authored market analysis; everyone reads,
