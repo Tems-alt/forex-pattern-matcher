@@ -12,8 +12,8 @@ import plotly.graph_objects as go
 import streamlit as st
 from supabase import create_client, Client
 
-SUPABASE_URL = st.secrets["https://opwihijkhkuenzhnrvtt.supabase.co/rest/v1/"]
-SUPABASE_KEY = st.secrets["sb_publishable_KB6SkIn2vcInAOYYwwbSsw_XRmfw94M"]
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 from PIL import Image
